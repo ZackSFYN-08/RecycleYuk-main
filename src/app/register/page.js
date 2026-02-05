@@ -23,7 +23,8 @@ export default function RegisterPage() {
     rw: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    platNomor: '' // Tambahan state plat nomor
   });
 
   const [role, setRole] = useState('user'); // Default role: Warga
@@ -94,7 +95,9 @@ export default function RegisterPage() {
             id: authData.user.id,
             name: formData.nama,
             status: 'Off Duty',
-            vehicle: '-'
+            vehicle: '-',
+            plat_nomor: formData.platNomor, // Simpan Plat Nomor
+            verification_status: 'pending' // Default status: pending
           });
         }
 
@@ -186,6 +189,17 @@ export default function RegisterPage() {
                   <div>
                     <label className="block text-sm font-bold text-green-800 mb-1">RW</label>
                     <div className="relative"><Home className="absolute left-3 top-3 text-green-600" size={18} /><input type="text" name="rw" value={formData.rw} onChange={handleChange} className="w-full pl-10 pr-4 py-3 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-800" placeholder="005" /></div>
+                  </div>
+                </div>
+              )}
+
+              {/* INPUT PLAT NOMOR (Hanya Driver) */}
+              {role === 'driver' && (
+                <div className="relative group">
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Plat Nomor Kendaraan</label>
+                  <div className="relative">
+                    <Truck className="absolute left-3 top-3 text-gray-400" size={20} />
+                    <input type="text" name="platNomor" value={formData.platNomor} onChange={handleChange} className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-800 uppercase" placeholder="D 1234 ABC" required />
                   </div>
                 </div>
               )}

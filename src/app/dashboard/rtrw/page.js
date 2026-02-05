@@ -8,9 +8,9 @@ import {
     LayoutDashboard, Users, Trash2, TrendingUp, Calendar, MapPin,
     Search, Download, MessageSquare, AlertCircle,
     CheckCircle, X, Truck, Eye, FileText, Send, Star, Map, Filter,
-    User, LogOut, Clock, ChevronLeft, ChevronRight, Menu, BarChart3, Wallet, Bell, Recycle
+    User, LogOut, Clock, ChevronLeft, ChevronRight, Menu, BarChart3, Wallet, Bell, Recycle, Edit2
 } from 'lucide-react';
-import { exportToExcel, formatRupiah } from '@/utils/enhancedHelpers';
+import { exportToExcel, formatRupiah, uploadAvatar } from '@/utils/enhancedHelpers';
 import Swal from 'sweetalert2';
 
 // --- INISIALISASI SUPABASE ---
@@ -86,8 +86,7 @@ export default function KepalaDashboard() {
 
             // B. Ambil Transaksi (Filter by RT/RW)
             let trxQuery = supabase
-                .from('transactions')
-                .select('*, profiles!inner(full_name, address, alamat, rt, rw), waste_types(name)')
+                .select('*, profiles!inner(full_name, address, rt, rw), waste_types(name)')
                 .order('created_at', { ascending: false });
 
             // Apply filters if RT/RW exists
@@ -202,6 +201,33 @@ export default function KepalaDashboard() {
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
     };
 
+    const handleAvatarChange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            Swal.fire({
+                title: 'Mengupload...',
+                text: 'Mohon tunggu sebentar',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            const publicUrl = await uploadAvatar(file, currentUser.id);
+            if (!publicUrl) throw new Error('Gagal mendapatkan URL gambar.');
+
+            // Update profile in DB
+            const { error } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id);
+            if (error) throw error;
+
+            setCurrentUser(prev => ({ ...prev, avatar_url: publicUrl }));
+            Swal.fire('Sukses', 'Foto profil berhasil diperbarui!', 'success');
+        } catch (err) {
+            console.error(err);
+            Swal.fire('Error', 'Gagal upload foto: ' + err.message, 'error');
+        }
+    };
+
     // --- RENDERERS ---
 
     const renderDashboard = () => (
@@ -290,7 +316,7 @@ export default function KepalaDashboard() {
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm">
                             <thead className="bg-gray-50 border-b">
-                                <tr><th className="p-4 text-gray-600">ID</th><th className="p-4 text-gray-600">Warga</th><th className="p-4 text-gray-600">Lokasi</th><th className="p-4 text-gray-600">Berat</th><th className="p-4 text-gray-600">Status</th><th className="p-4 text-gray-600">Aksi</th></tr>
+                                <tr><th className="p-4 text-gray-600">ID</th><th className="p-4 text-gray-600">Warga</th><th className="p-4 text-gray-600">Lokasi</th><th className="p-4 text-gray-600">Driver</th><th className="p-4 text-gray-600">Berat</th><th className="p-4 text-gray-600">Status</th><th className="p-4 text-gray-600">Aksi</th></tr>
                             </thead>
                             <tbody>
                                 {filtered.map(t => (
@@ -298,6 +324,7 @@ export default function KepalaDashboard() {
                                         <td className="p-4 text-gray-500 font-mono text-xs">{t.id.slice(0, 8)}</td>
                                         <td className="p-4 font-bold text-gray-800">{t.profiles?.full_name}</td>
                                         <td className="p-4 text-gray-600">{t.profiles?.alamat || t.profiles?.address || '-'}</td>
+                                        <td className="p-4 text-gray-800 font-medium">{t.driver_name || '-'}</td>
                                         <td className="p-4 text-gray-800">{t.weight} Kg</td>
                                         <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold border ${getStatusColor(t.status)}`}>{t.status}</span></td>
                                         <td className="p-4"><button onClick={() => setSelectedTransaction(t)} className="text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100"><Eye size={16} /></button></td>
@@ -413,9 +440,20 @@ export default function KepalaDashboard() {
         <div className="max-w-2xl mx-auto animate-in slide-in-from-right">
             <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200">
                 <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
-                    <div className="w-24 h-24 bg-emerald-100 rounded-full flex items-center justify-center text-4xl font-bold text-emerald-600">
-                        {currentUser?.full_name?.charAt(0) || 'K'}
+                    <div className="relative group cursor-pointer" onClick={() => document.getElementById('rtrw-avatar-upload').click()}>
+                        <div className="w-24 h-24 bg-emerald-100 rounded-full flex items-center justify-center text-4xl font-bold text-emerald-600 overflow-hidden border-4 border-emerald-50">
+                            {currentUser?.avatar_url ? (
+                                <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                                currentUser?.full_name?.charAt(0) || 'K'
+                            )}
+                        </div>
+                        <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                            <Edit2 className="text-white" size={20} />
+                        </div>
                     </div>
+                    <input type="file" id="rtrw-avatar-upload" className="hidden" accept="image/*" onChange={handleAvatarChange} />
+
                     <div>
                         <h2 className="text-2xl font-bold text-gray-800">{currentUser?.full_name}</h2>
                         <p className="text-gray-500">{currentUser?.email}</p>
@@ -499,8 +537,12 @@ export default function KepalaDashboard() {
                             </button>
                             <div className="w-px h-6 bg-gray-200"></div>
                             <button onClick={() => setActivePage('profile')} className="flex items-center gap-3 pl-2 pr-3 py-1 rounded-lg hover:bg-gray-50 transition">
-                                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200">
-                                    {currentUser?.full_name?.charAt(0) || 'K'}
+                                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200 overflow-hidden">
+                                    {currentUser?.avatar_url ? (
+                                        <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                                    ) : (
+                                        currentUser?.full_name?.charAt(0) || 'K'
+                                    )}
                                 </div>
                                 <div className="text-left hidden md:block">
                                     <p className="text-xs font-bold text-gray-800 line-clamp-1 max-w-[100px]">{currentUser?.full_name || 'Kepala RT/RW'}</p>

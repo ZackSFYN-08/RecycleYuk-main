@@ -275,7 +275,34 @@ export const groupByPeriod = (transactions, period = 'day') => {
     return groups;
 };
 
+// Upload Avatar Helper
+export const uploadAvatar = async (file, userId) => {
+    try {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${userId}-${Date.now()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+            .from('avatars')
+            .upload(filePath, file);
+
+        if (uploadError) {
+            throw uploadError;
+        }
+
+        const { data: { publicUrl } } = supabase.storage
+            .from('avatars')
+            .getPublicUrl(filePath);
+
+        return publicUrl;
+    } catch (error) {
+        console.error('Error uploading avatar:', error);
+        throw error;
+    }
+};
+
 export default {
+    uploadAvatar,
     calculateRewardPoints,
     getRewardBadge,
     formatRupiah,
@@ -290,5 +317,6 @@ export default {
     estimateETA,
     generateChartColors,
     filterByDateRange,
-    groupByPeriod
+    groupByPeriod,
+    uploadAvatar
 };

@@ -8,9 +8,9 @@ import {
     Bell, Search, Plus, Edit, Trash2, CheckCircle, X, ChevronLeft, ChevronRight,
     Clock, User, LogOut, Shield, Mail, Menu, Filter, Download, Save,
     AlertCircle, CheckCheck, Loader2, PlayCircle, BookOpen, ArrowRight, Lock,
-    CreditCard, Recycle // Icon baru untuk pembayaran + Recycle
+    CreditCard, Recycle, CheckCircle2 // Icon baru untuk pembayaran + Recycle
 } from 'lucide-react';
-import { exportToExcel, formatRupiah } from '@/utils/enhancedHelpers';
+import { exportToExcel, formatRupiah, uploadAvatar } from '@/utils/enhancedHelpers';
 import Swal from 'sweetalert2';
 
 // --- INISIALISASI SUPABASE ---
@@ -329,9 +329,50 @@ export default function AdminDashboard() {
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
     };
 
+    const handleAvatarChange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            Swal.fire({
+                title: 'Mengupload...',
+                text: 'Mohon tunggu sebentar',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            const publicUrl = await uploadAvatar(file, currentUser.id);
+            if (!publicUrl) throw new Error('Gagal mendapatkan URL gambar.');
+
+            // Update profile in DB
+            const { error } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id);
+            if (error) throw error;
+
+            setCurrentUser(prev => ({ ...prev, avatar_url: publicUrl }));
+            Swal.fire('Sukses', 'Foto profil berhasil diperbarui!', 'success');
+        } catch (err) {
+            console.error(err);
+            Swal.fire('Error', 'Gagal upload foto: ' + err.message, 'error');
+        }
+    };
+
     const handleMarkRead = async (id) => {
         await supabase.from('notifications').update({ is_read: true }).eq('id', id);
         setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    };
+
+    const handleVerifyDriver = async (driverId, newStatus) => {
+        try {
+            const { error } = await supabase.from('drivers').update({ verification_status: newStatus }).eq('id', driverId);
+            if (error) throw error;
+
+            setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, verification_status: newStatus } : d));
+            Swal.fire('Sukses', `Status driver berhasil diubah menjadi ${newStatus}`, 'success');
+
+            // Kirim notifikasi ke driver (bisa via tabel notif, disini simulasi alert sukses saja)
+        } catch (err) {
+            Swal.fire('Error', 'Gagal update status verifikasi: ' + err.message, 'error');
+        }
     };
 
     // Helper Functions
@@ -532,15 +573,32 @@ export default function AdminDashboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {drivers.map(d => (
                     <div key={d.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 relative group hover:shadow-md transition">
-                        <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="absolute top-4 right-4 flex gap-1 opacity-100 transition-opacity">
                             <button onClick={() => openModal('driver', d)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"><Edit size={16} /></button>
                             <button onClick={() => handleDelete(d.id, 'driver')} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"><Trash2 size={16} /></button>
                         </div>
                         <div className="flex items-center gap-4 mb-4">
                             <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center text-xl font-bold text-gray-500">{d.name.charAt(0)}</div>
-                            <div><h4 className="font-bold text-lg text-gray-800">{d.name}</h4><p className="text-sm text-gray-500">{d.vehicle}</p></div>
+                            <div>
+                                <h4 className="font-bold text-lg text-gray-800">{d.name}</h4>
+                                <p className="text-sm text-gray-500">{d.vehicle}</p>
+                                <div className={`text-xs px-2 py-0.5 rounded-full w-fit mt-1 font-bold ${d.verification_status === 'verified' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                    {d.verification_status === 'verified' ? 'Terverifikasi' : (d.verification_status === 'rejected' ? 'Ditolak' : 'Menunggu Verifikasi')}
+                                </div>
+                            </div>
                         </div>
-                        <div className="flex justify-between items-center text-sm">
+
+                        {/* Action Buttons for Verification */}
+                        {d.verification_status !== 'verified' && (
+                            <div className="flex gap-2 mb-4">
+                                <button onClick={() => handleVerifyDriver(d.id, 'verified')} className="flex-1 bg-green-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-green-700">Verifikasi</button>
+                                {d.verification_status !== 'rejected' && (
+                                    <button onClick={() => handleVerifyDriver(d.id, 'rejected')} className="flex-1 bg-red-50 text-red-600 border border-red-200 py-2 rounded-lg text-xs font-bold hover:bg-red-100">Tolak</button>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex justify-between items-center text-sm border-t pt-3 border-gray-100">
                             <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-medium">{d.shift}</span>
                             <span className={`px-3 py-1 rounded-full font-bold ${d.status === 'On Duty' ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-600'}`}>{d.status}</span>
                         </div>
@@ -727,12 +785,32 @@ export default function AdminDashboard() {
         <div className="max-w-4xl mx-auto space-y-6 animate-in slide-in-from-right text-gray-800">
             <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200">
                 <h3 className="font-bold text-xl mb-6 flex items-center gap-2 text-gray-800"><User size={22} /> Edit Profil Admin</h3>
-                <form onSubmit={handleUpdateProfile} className="space-y-5 max-w-xl">
+
+                <div className="flex flex-col items-center mb-8">
+                    <div className="relative group cursor-pointer" onClick={() => document.getElementById('admin-avatar-upload').click()}>
+                        <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-green-100 shadow-sm">
+                            {currentUser?.avatar_url ? (
+                                <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                                <div className="w-full h-full bg-green-100 flex items-center justify-center text-3xl font-bold text-green-600">
+                                    {currentUser?.full_name?.charAt(0) || 'A'}
+                                </div>
+                            )}
+                        </div>
+                        <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                            <Edit className="text-white" size={20} />
+                        </div>
+                    </div>
+                    <input type="file" id="admin-avatar-upload" className="hidden" accept="image/*" onChange={handleAvatarChange} />
+                    <p className="text-xs text-gray-400 mt-2">Klik foto untuk mengganti</p>
+                </div>
+
+                <form onSubmit={handleUpdateProfile} className="space-y-5 max-w-xl mx-auto">
                     <div><label className="block text-sm font-bold mb-1 text-gray-600">Email (Read Only)</label><input disabled className="w-full border p-2 rounded bg-gray-100 text-gray-500 cursor-not-allowed" value={currentUser?.email || ''} /></div>
                     <div><label className="block text-sm font-bold mb-1 text-gray-600">Nama Lengkap</label><input className="w-full border p-2 rounded bg-white text-gray-800" value={currentUser?.full_name || ''} onChange={e => setCurrentUser({ ...currentUser, full_name: e.target.value })} /></div>
                     <div><label className="block text-sm font-bold mb-1 text-gray-600">Alamat</label><textarea className="w-full border p-2 rounded bg-white text-gray-800 h-24 resize-none" value={currentUser?.alamat || ''} onChange={e => setCurrentUser({ ...currentUser, alamat: e.target.value })} /></div>
                     <div className="pt-4 border-t border-gray-100 mt-4"><h4 className="font-bold text-sm mb-3 flex items-center gap-2 text-orange-600"><Shield size={16} /> Keamanan Akun</h4><input type="password" className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Password Baru (Min 6 karakter, Kosongkan jika tidak ubah)" onChange={e => setCurrentUser({ ...currentUser, newPassword: e.target.value })} /></div>
-                    <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 transition mt-4">Simpan Perubahan Profil</button>
+                    <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 transition mt-4 w-full">Simpan Perubahan Profil</button>
                 </form>
             </div>
         </div>
@@ -840,8 +918,12 @@ export default function AdminDashboard() {
 
                                 {/* Tombol Profil (Kanan) */}
                                 <button onClick={() => setActivePage('profile')} className="flex items-center gap-3 pl-2 pr-3 py-1 rounded-lg hover:bg-gray-50 transition">
-                                    <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200">
-                                        {currentUser?.full_name?.charAt(0) || 'A'}
+                                    <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200 overflow-hidden">
+                                        {currentUser?.avatar_url ? (
+                                            <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                                        ) : (
+                                            currentUser?.full_name?.charAt(0) || 'A'
+                                        )}
                                     </div>
                                     <div className="text-left hidden md:block">
                                         <p className="text-xs font-bold text-gray-800 line-clamp-1 max-w-[100px]">{currentUser?.full_name || 'Admin'}</p>

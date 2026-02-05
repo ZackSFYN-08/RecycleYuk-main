@@ -12,7 +12,7 @@ import {
     Navigation, Trophy, Recycle // Icon Navigasi GPS + Trophy + Recycle
 } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { getRewardBadge, formatRupiah, calculateRewardPoints } from '@/utils/enhancedHelpers';
+import { getRewardBadge, formatRupiah, calculateRewardPoints, uploadAvatar } from '@/utils/enhancedHelpers';
 import ChatModal from '@/components/shared/ChatModal';
 
 // --- OPENLAYERS IMPORTS ---
@@ -400,6 +400,33 @@ export default function UserDashboard() {
         try { await supabase.from('profiles').update(updatedData).eq('id', profile.id); setProfile({ ...profile, ...updatedData }); setIsEditProfile(false); Swal.fire('Sukses', 'Profil disimpan', 'success'); fetchData(); } catch (e) { }
     };
 
+    const handleAvatarChange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            Swal.fire({
+                title: 'Mengupload...',
+                text: 'Mohon tunggu sebentar',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            const publicUrl = await uploadAvatar(file, profile.id);
+            if (!publicUrl) throw new Error('Gagal mendapatkan URL gambar.');
+
+            // Update profile in DB
+            const { error } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', profile.id);
+            if (error) throw error;
+
+            setProfile(prev => ({ ...prev, avatar_url: publicUrl }));
+            Swal.fire('Sukses', 'Foto profil berhasil diperbarui!', 'success');
+        } catch (err) {
+            console.error(err);
+            Swal.fire('Error', 'Gagal upload foto: ' + err.message, 'error');
+        }
+    };
+
     const handleRequestSubmit = async (e) => {
         e.preventDefault();
         if (!formRequest.wasteTypeId) { Swal.fire('Gagal', 'Pilih sampah', 'error'); return; }
@@ -630,6 +657,26 @@ export default function UserDashboard() {
     const renderProfile = () => (
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 animate-in slide-in-from-right pb-20 md:pb-0">
             <div className="flex justify-between items-center mb-6"><h3 className="text-lg font-bold flex items-center gap-2 text-gray-800"><User /> Profil Saya</h3><button onClick={() => setIsEditProfile(true)} className="text-sm font-bold text-green-600 flex items-center gap-1 hover:underline"><Edit2 size={16} /> Edit</button></div>
+
+            <div className="flex flex-col items-center mb-8">
+                <div className="relative group cursor-pointer" onClick={() => document.getElementById('avatar-upload').click()}>
+                    <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-green-100 shadow-sm">
+                        {profile?.avatar_url ? (
+                            <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                        ) : (
+                            <div className="w-full h-full bg-green-100 flex items-center justify-center text-3xl font-bold text-green-600">
+                                {profile?.full_name?.charAt(0) || 'U'}
+                            </div>
+                        )}
+                    </div>
+                    <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                        <Edit2 className="text-white" size={20} />
+                    </div>
+                </div>
+                <input type="file" id="avatar-upload" className="hidden" accept="image/*" onChange={handleAvatarChange} />
+                <p className="text-xs text-gray-400 mt-2">Klik foto untuk mengganti</p>
+            </div>
+
             <div className="space-y-4 text-gray-800">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="p-4 bg-gray-50 rounded-lg border border-gray-100"><label className="text-xs font-bold text-gray-500 uppercase">Nama Lengkap</label><p className="font-medium text-lg text-gray-900">{profile?.full_name}</p></div>
@@ -638,7 +685,6 @@ export default function UserDashboard() {
                     <div className="p-4 bg-green-50 rounded-lg border border-green-100"><label className="text-xs font-bold text-green-700 uppercase">RT / RW</label><p className="font-medium text-lg text-green-900">{profile?.rt ? `${profile.rt} / ${profile.rw}` : <span className="text-red-500 text-sm italic">Belum diisi</span>}</p></div>
                 </div>
                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-100"><label className="text-xs font-bold text-gray-500 uppercase">Alamat</label><p className="font-medium text-lg text-gray-900">{profile?.address}</p></div>
-
             </div>
         </div>
     );
@@ -712,8 +758,12 @@ export default function UserDashboard() {
                             </button>
                             <div className="w-px h-6 bg-gray-200"></div>
                             <button onClick={() => setActivePage('profile')} className="flex items-center gap-3 pl-2 pr-3 py-1 rounded-lg hover:bg-gray-50 transition">
-                                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200">
-                                    {profile?.full_name?.charAt(0) || 'U'}
+                                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200 overflow-hidden">
+                                    {profile?.avatar_url ? (
+                                        <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                                    ) : (
+                                        profile?.full_name?.charAt(0) || 'U'
+                                    )}
                                 </div>
                                 <div className="text-left hidden md:block">
                                     <p className="text-xs font-bold text-gray-800 line-clamp-1 max-w-[100px]">{profile?.full_name}</p>

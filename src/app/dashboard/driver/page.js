@@ -7,10 +7,10 @@ import {
     LayoutDashboard, Truck, MapPin, CheckCircle, History, User,
     LogOut, Menu, X, ChevronLeft, ChevronRight, Search,
     Navigation, Clock, Calendar, CheckCircle2, AlertCircle, Package,
-    Loader2, Phone, MessageCircle, Wallet, DollarSign, TrendingUp, Download, Trophy, Bell, Recycle
+    Loader2, Phone, MessageCircle, Wallet, DollarSign, TrendingUp, Download, Trophy, Bell, Recycle, Edit2
 } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { calculateDriverEarnings, formatRupiah, exportToExcel } from '@/utils/enhancedHelpers';
+import { calculateDriverEarnings, formatRupiah, exportToExcel, uploadAvatar } from '@/utils/enhancedHelpers';
 import ChatModal from '@/components/shared/ChatModal';
 
 // --- OPENLAYERS IMPORTS ---
@@ -268,21 +268,54 @@ export default function DriverDashboard() {
             const { data: dProfile } = await supabase.from('drivers').select('*').eq('id', user.id).single();
             if (dProfile) setDriverProfile(dProfile);
 
-            // Ambil Task Aktif
+            // 1. Ambil Wilayah Kerja Driver (Assigned Areas)
+            const { data: myAreas } = await supabase
+                .from('areas')
+                .select('*')
+                .eq('driver_id', user.id);
+
+            // 2. Ambil Task Aktif (Pending & Process)
+            // Fix: Gunakan relasi standar `profiles(...)` bukan alias `profiles:profile_id(...)` yang mungkin error jika tidak didefinisikan
             const { data: activeTasks } = await supabase
                 .from('transactions')
-                .select(`*, profiles:profile_id(full_name, address, rt, rw, phone), waste_types(name)`)
+                .select(`*, profiles(full_name, address, rt, rw, phone), waste_types(name)`)
                 .neq('status', 'Done')
                 .order('created_at', { ascending: true });
 
-            const filteredTasks = (activeTasks || []).filter(t =>
-                t.status === 'Pending' || (t.status === 'Process' && t.driver_id === user.id)
-            );
+            // 3. Filter Task Berdasarkan Wilayah Kerja
+            // Tampilkan task jika:
+            // a. Status 'Process' DAN diambil oleh driver ini (prioritas tertinggi, abaikan wilayah)
+            // b. Status 'Pending' DAN lokasi user (RT/RW) cocok dengan salah satu wilayah kerja driver
+            const filteredTasks = (activeTasks || []).filter(t => {
+                const isMyProcess = t.status === 'Process' && t.driver_id === user.id;
 
-            // Generate Koordinat Dummy
+                // Jika sedang diproses saya, pasti muncul
+                if (isMyProcess) return true;
+
+                // Jika status Pending, cek wilayah
+                if (t.status === 'Pending') {
+                    // Jika driver tidak punya wilayah, tampilkan kosong (atau semua? Sebaiknya kosong agar rapi)
+                    if (!myAreas || myAreas.length === 0) return false;
+
+                    const userRT = t.profiles?.rt;
+                    const userRW = t.profiles?.rw;
+
+                    // Cek apakah RT/RW user ada di list wilayah driver
+                    // Asumsi: `areas` table punya kolom `rt` dan `rw`.
+                    // Cocok jika RW sama DAN (RT sama ATAU RT di area null/all) - sesuaikan dengan struktur data area
+                    return myAreas.some(area =>
+                        area.rw == userRW &&
+                        (area.rt == userRT || !area.rt) // !area.rt berarti mencakup satu RW full
+                    );
+                }
+
+                return false;
+            });
+
+            // Generate Koordinat Dummy untuk Visualisasi Map
             const tasksWithCoords = filteredTasks.map(t => ({
                 ...t,
-                // Koordinat acak di sekitar lokasi driver
+                // Koordinat acak di sekitar lokasi driver (Simulasi)
                 lat: myLocation[1] + (Math.random() * 0.015 - 0.0075),
                 lng: myLocation[0] + (Math.random() * 0.015 - 0.0075)
             }));
@@ -349,6 +382,17 @@ export default function DriverDashboard() {
 
     const handleDriverStatusToggle = async () => {
         if (!driverProfile) return;
+
+        // --- CEK VERIFIKASI ---
+        if (driverProfile.verification_status !== 'verified') {
+            return Swal.fire({
+                title: 'Akun Belum Terverifikasi',
+                text: 'Harap hubungi Admin untuk verifikasi akun sebelum mulai bekerja.',
+                icon: 'warning',
+                confirmButtonColor: '#F59E0B'
+            });
+        }
+
         const newStatus = driverProfile.status === 'On Duty' ? 'Off Duty' : 'On Duty';
         try {
             await supabase.from('drivers').update({ status: newStatus }).eq('id', driverProfile.id);
@@ -367,6 +411,33 @@ export default function DriverDashboard() {
         } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
     };
 
+    const handleAvatarChange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            Swal.fire({
+                title: 'Mengupload...',
+                text: 'Mohon tunggu sebentar',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            const publicUrl = await uploadAvatar(file, currentUser.id);
+            if (!publicUrl) throw new Error('Gagal mendapatkan URL gambar.');
+
+            // Update profile in DB
+            const { error } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id);
+            if (error) throw error;
+
+            setCurrentUser(prev => ({ ...prev, avatar_url: publicUrl }));
+            Swal.fire('Sukses', 'Foto profil berhasil diperbarui!', 'success');
+        } catch (err) {
+            console.error(err);
+            Swal.fire('Error', 'Gagal upload foto: ' + err.message, 'error');
+        }
+    };
+
     // --- RENDERERS ---
 
     const renderDashboard = () => (
@@ -380,6 +451,12 @@ export default function DriverDashboard() {
                         <div className="inline-flex items-center bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg border border-white/30">
                             <span className={`w-3 h-3 rounded-full mr-2 ${driverProfile?.status === 'On Duty' ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`}></span>
                             <span className="font-medium text-sm">Status: {driverProfile ? (driverProfile.status || 'Off Duty') : (loading ? 'Loading...' : 'Tidak Terdaftar')}</span>
+                        </div>
+
+                        {/* Status Verifikasi Badge */}
+                        <div className={`inline-flex items-center px-4 py-2 rounded-lg border border-white/30 backdrop-blur-sm ${driverProfile?.verification_status === 'verified' ? 'bg-green-500/20 text-white' : 'bg-yellow-500/20 text-yellow-100'}`}>
+                            {driverProfile?.verification_status === 'verified' ? <CheckCircle2 size={16} className="mr-2" /> : <AlertCircle size={16} className="mr-2" />}
+                            <span className="font-bold text-sm uppercase">{driverProfile?.verification_status || 'Pending'}</span>
                         </div>
                         <button
                             onClick={handleDriverStatusToggle}
@@ -920,9 +997,20 @@ export default function DriverDashboard() {
         <div className="space-y-6 animate-in slide-in-from-right pb-20 md:pb-0">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-8 text-white text-center">
-                    <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 text-4xl font-bold backdrop-blur">
-                        {currentUser?.full_name?.charAt(0) || 'D'}
+                    <div className="relative group w-24 h-24 mx-auto mb-4 cursor-pointer" onClick={() => document.getElementById('driver-avatar-upload').click()}>
+                        <div className="w-full h-full bg-white/20 rounded-full flex items-center justify-center text-4xl font-bold backdrop-blur overflow-hidden border-2 border-white/30">
+                            {currentUser?.avatar_url ? (
+                                <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                                currentUser?.full_name?.charAt(0) || 'D'
+                            )}
+                        </div>
+                        <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                            <Edit2 className="text-white" size={24} />
+                        </div>
                     </div>
+                    <input type="file" id="driver-avatar-upload" className="hidden" accept="image/*" onChange={handleAvatarChange} />
+
                     <h2 className="text-2xl font-bold">{currentUser?.full_name || 'Driver'}</h2>
                     <p className="opacity-80 mt-1">{currentUser?.email}</p>
                     <span className="inline-block mt-3 bg-white/20 px-4 py-1 rounded-full text-sm font-bold backdrop-blur">
@@ -1058,8 +1146,12 @@ export default function DriverDashboard() {
                             </button>
                             <div className="w-px h-6 bg-gray-200"></div>
                             <button onClick={() => navigateTo('profile')} className="flex items-center gap-3 pl-2 pr-3 py-1 rounded-lg hover:bg-gray-50 transition">
-                                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200">
-                                    {currentUser?.full_name?.charAt(0) || 'D'}
+                                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold border border-green-200 overflow-hidden">
+                                    {currentUser?.avatar_url ? (
+                                        <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                                    ) : (
+                                        currentUser?.full_name?.charAt(0) || 'D'
+                                    )}
                                 </div>
                                 <div className="text-left hidden md:block">
                                     <p className="text-xs font-bold text-gray-800 line-clamp-1 max-w-[100px]">{currentUser?.full_name}</p>
