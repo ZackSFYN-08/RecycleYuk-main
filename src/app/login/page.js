@@ -42,7 +42,7 @@ export default function Login() {
         .single();
 
       if (profileError) {
-          console.error("Gagal ambil profil:", profileError);
+        console.error("Gagal ambil profil:", profileError);
       }
 
       const userRole = profileData?.role || 'user'; // Default 'user' jika null
@@ -61,13 +61,13 @@ export default function Login() {
       }).then(() => {
         // --- LOGIKA REDIRECT BERDASARKAN ROLE ---
         if (userRole === 'admin') {
-            router.push('/dashboard/admin');
+          router.push('/dashboard/admin');
         } else if (userRole === 'driver') {
-            router.push('/dashboard/driver');
-        } else if (userRole === 'rtrw') { // Sesuaikan jika role di DB adalah 'rtrw' atau 'rt'
-            router.push('/dashboard/rtrw'); 
+          router.push('/dashboard/driver');
+        } else if (userRole === 'rtrw' || userRole === 'rt') { // Support both 'rtrw' and 'rt'
+          router.push('/dashboard/rtrw');
         } else {
-            router.push('/dashboard/user'); // Default Warga
+          router.push('/dashboard/user'); // Default Warga
         }
       });
 
@@ -88,24 +88,24 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-4 relative">
       {/* Background Animation */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-20 left-10 w-20 h-20 bg-green-200 rounded-full opacity-20 animate-bounce" style={{animationDuration: '3s'}}></div>
-        <div className="absolute top-40 right-20 w-16 h-16 bg-emerald-300 rounded-full opacity-20 animate-bounce" style={{animationDuration: '4s', animationDelay: '1s'}}></div>
-        <div className="absolute bottom-20 left-1/4 w-24 h-24 bg-teal-200 rounded-full opacity-20 animate-bounce" style={{animationDuration: '5s', animationDelay: '2s'}}></div>
+        <div className="absolute top-20 left-10 w-20 h-20 bg-green-200 rounded-full opacity-20 animate-bounce" style={{ animationDuration: '3s' }}></div>
+        <div className="absolute top-40 right-20 w-16 h-16 bg-emerald-300 rounded-full opacity-20 animate-bounce" style={{ animationDuration: '4s', animationDelay: '1s' }}></div>
+        <div className="absolute bottom-20 left-1/4 w-24 h-24 bg-teal-200 rounded-full opacity-20 animate-bounce" style={{ animationDuration: '5s', animationDelay: '2s' }}></div>
       </div>
 
       <div className="w-full max-w-md relative z-10">
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
-          
+
           {/* Header Hijau */}
           <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-8 text-white text-center relative overflow-hidden flex flex-col items-center justify-center">
             <div className="absolute inset-0 bg-white opacity-10 animate-pulse"></div>
             <div className="relative z-10">
-              
+
               {/* --- BAGIAN LOGO (MENGGANTIKAN TEKS) --- */}
               <div className="mb-4 bg-white/20 p-3 rounded-2xl backdrop-blur-sm shadow-inner inline-block">
                 <img src="/images/logo.png" alt="RecycleYuk Logo" className="h-20 w-auto object-contain brightness-0 invert" />
               </div>
-              
+
               <p className="text-green-50 text-sm font-medium tracking-wide">Platform Manajemen Sampah Terpadu</p>
             </div>
           </div>
@@ -192,7 +192,7 @@ export default function Login() {
             <div className="mt-6 text-center">
               <p className="text-gray-600">
                 Belum punya akun?{' '}
-                <button 
+                <button
                   type="button"
                   onClick={() => router.push('/register')}
                   className="text-green-600 hover:text-green-700 font-semibold"

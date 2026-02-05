@@ -261,7 +261,13 @@ export default function AdminDashboard() {
                 ({ error } = await query);
             }
             else if (modalType === 'user') {
-                ({ error } = await supabase.from('profiles').update({ full_name: formData.name, role: formData.role, alamat: formData.region }).eq('id', editingItem.id));
+                ({ error } = await supabase.from('profiles').update({
+                    full_name: formData.name,
+                    role: formData.role,
+                    alamat: formData.region,
+                    rt: formData.rt,
+                    rw: formData.rw
+                }).eq('id', editingItem.id));
             }
             else if (modalType === 'pickup') {
                 ({ error } = await supabase.from('transactions').update({ status: formData.status, driver_name: formData.driver }).eq('id', editingItem.id));
@@ -488,7 +494,10 @@ export default function AdminDashboard() {
                             <tr key={u.id} className="border-b hover:bg-gray-50">
                                 <td className="p-4"><div className="font-bold">{u.full_name || 'Tanpa Nama'}</div><div className="text-xs text-gray-500">{u.email}</div></td>
                                 <td className="p-4"><span className="bg-gray-100 px-2 py-1 rounded uppercase text-xs font-bold text-gray-700">{u.role}</span></td>
-                                <td className="p-4 text-gray-600">{u.alamat || '-'}</td>
+                                <td className="p-4 text-gray-600">
+                                    <div>{u.alamat || '-'}</div>
+                                    {(u.rt || u.rw) && <div className="text-xs text-green-600 font-bold mt-1">RT {u.rt} / RW {u.rw}</div>}
+                                </td>
                                 <td className="p-4 text-right">
                                     <button onClick={() => openModal('user', u)} className="text-blue-600 hover:bg-blue-50 p-2 rounded transition"><Edit size={16} /></button>
                                     {!drivers.some(d => d.id === u.id) && (
@@ -887,7 +896,15 @@ export default function AdminDashboard() {
 
                             {modalType === 'pickup' && <><div className="bg-gray-100 p-3 rounded text-sm text-gray-800 font-medium">User: {formData.user} ({formData.weightLabel})</div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.status || 'Pending'} onChange={e => setFormData({ ...formData, status: e.target.value })}><option value="Pending">Pending</option><option value="In Progress">Proses</option><option value="Done">Selesai</option><option value="Canceled">Dibatalkan</option></select><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driver || ''} onChange={e => setFormData({ ...formData, driver: e.target.value })}><option value="">Assign Driver</option>{drivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}</select></>}
 
-                            {modalType === 'user' && <><input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Nama" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} /><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.role || ''} onChange={e => setFormData({ ...formData, role: e.target.value })}><option value="user">User</option><option value="admin">Admin</option><option value="driver">Driver (Via Menu Driver)</option><option value="rtrw">RT/RW</option></select><input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Alamat" value={formData.region || ''} onChange={e => setFormData({ ...formData, region: e.target.value })} /></>}
+                            {modalType === 'user' && <>
+                                <input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Nama" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+                                <select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.role || ''} onChange={e => setFormData({ ...formData, role: e.target.value })}><option value="user">User</option><option value="admin">Admin</option><option value="driver">Driver (Via Menu Driver)</option><option value="rt">Ketua RT</option><option value="rw">Ketua RW</option></select>
+                                <input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Alamat" value={formData.region || ''} onChange={e => setFormData({ ...formData, region: e.target.value })} />
+                                <div className="grid grid-cols-2 gap-4">
+                                    <input className="border p-2 rounded bg-white text-gray-800" placeholder="RT" value={formData.rt || ''} onChange={e => setFormData({ ...formData, rt: e.target.value })} />
+                                    <input className="border p-2 rounded bg-white text-gray-800" placeholder="RW" value={formData.rw || ''} onChange={e => setFormData({ ...formData, rw: e.target.value })} />
+                                </div>
+                            </>}
 
                             <button type="submit" disabled={loading} className="w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition mt-4">{loading ? 'Menyimpan...' : 'Simpan'}</button>
                         </form>

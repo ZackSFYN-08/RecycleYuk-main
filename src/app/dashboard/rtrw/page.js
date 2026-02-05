@@ -81,22 +81,46 @@ export default function KepalaDashboard() {
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
             setCurrentUser({ ...user, ...profile });
 
-            // B. Ambil Semua Transaksi (Global)
-            const { data: trx } = await supabase
+            // Ensure profile loaded
+            if (!profile) return;
+
+            // B. Ambil Transaksi (Filter by RT/RW)
+            let trxQuery = supabase
                 .from('transactions')
-                .select('*, profiles(full_name, address, alamat), waste_types(name)')
+                .select('*, profiles!inner(full_name, address, alamat, rt, rw), waste_types(name)')
                 .order('created_at', { ascending: false });
+
+            // Apply filters if RT/RW exists
+            if (profile.rt) trxQuery = trxQuery.eq('profiles.rt', profile.rt);
+            if (profile.rw) trxQuery = trxQuery.eq('profiles.rw', profile.rw);
+
+            const { data: trx, error: trxError } = await trxQuery;
+            if (trxError) console.error("Error fetching transactions:", trxError);
             setTransactions(trx || []);
 
-            // C. Ambil Pengaduan
-            const { data: comp } = await supabase
+            // C. Ambil Pengaduan (Filter by RT/RW)
+            let compQuery = supabase
                 .from('complaints')
-                .select('*, profiles(full_name)')
+                .select('*, profiles!inner(full_name, rt, rw)')
                 .order('created_at', { ascending: false });
+
+            if (profile.rt) compQuery = compQuery.eq('profiles.rt', profile.rt);
+            if (profile.rw) compQuery = compQuery.eq('profiles.rw', profile.rw);
+
+            const { data: comp, error: compError } = await compQuery;
+            if (compError) console.error("Error fetching complaints:", compError);
             setComplaints(comp || []);
 
-            // D. Hitung Total User
-            const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'user');
+            // D. Hitung Total User (Warga di RT/RW tersebut)
+            let userCountQuery = supabase
+                .from('profiles')
+                .select('*', { count: 'exact', head: true })
+                .eq('role', 'user');
+
+            if (profile.rt) userCountQuery = userCountQuery.eq('rt', profile.rt);
+            if (profile.rw) userCountQuery = userCountQuery.eq('rw', profile.rw);
+
+            const { count } = await userCountQuery;
             setUsersCount(count || 0);
 
         } catch (err) {
