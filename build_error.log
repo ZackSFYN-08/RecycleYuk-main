@@ -1,0 +1,9 @@
+
+> recycleyuk@0.1.0 build
+> next build
+
+⨯ Failed to load next.config.mjs, see more info here https://nextjs.org/docs/messages/next-config-error
+
+> Build error occurred
+SyntaxError: Unexpected token '<<'
+    at ignore-listed frames
