@@ -1,6 +1,15 @@
+<<<<<<< HEAD
 {
   "allowScripts": {
     "allow": [],
     "deny": ["npm:protobufjs@7.5.4", "npm:protobufjs@8.0.0"]
   }
 }
+=======
+{
+  "allowScripts": {
+    "allow": [],
+    "deny": ["npm:protobufjs@7.5.4", "npm:protobufjs@8.0.0"]
+  }
+}
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33

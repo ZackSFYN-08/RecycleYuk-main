@@ -370,7 +370,10 @@ export default function UserDashboard() {
                 if (active) {
                     setActivePickup({
                         id: active.id,
+<<<<<<< HEAD
                         driverId: active.driver_id, // Simpan Driver ID untuk tracking
+=======
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                         status: active.status === 'Process' ? 'Pengangkutan Aktif' : 'Menunggu Konfirmasi',
                         rawStatus: active.status,
                         driver: active.drivers?.full_name || 'Mencari Driver...',
@@ -387,6 +390,7 @@ export default function UserDashboard() {
         } catch (error) { console.error("Error data:", error); } finally { setLoading(false); }
     };
 
+<<<<<<< HEAD
     // --- REALTIME DRIVER TRACKING ---
     useEffect(() => {
         let channel;
@@ -424,6 +428,8 @@ export default function UserDashboard() {
     // useEffect(() => { ... }) 
     */
 
+=======
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
     const navigateTo = (pageId) => { setActivePage(pageId); setIsMobileMenuOpen(false); };
 
     const handleLogout = async () => {
@@ -468,6 +474,7 @@ export default function UserDashboard() {
     const handleRequestSubmit = async (e) => {
         e.preventDefault();
         if (!formRequest.wasteTypeId) { Swal.fire('Gagal', 'Pilih sampah', 'error'); return; }
+<<<<<<< HEAD
 
         // Cek apakah GPS aktif (opsional: bisa dipaksa harus aktif)
         // if (!isGpsActive) { Swal.fire('Lokasi Diperlukan', 'Aktifkan GPS untuk request pickup.', 'warning'); return; }
@@ -486,6 +493,10 @@ export default function UserDashboard() {
             };
 
             const { error } = await supabase.from('transactions').insert(payload);
+=======
+        try {
+            const { error } = await supabase.from('transactions').insert({ profile_id: profile.id, waste_type_id: formRequest.wasteTypeId, weight: formRequest.weight, status: 'Pending', pickup_time: formRequest.time, notes: formRequest.notes });
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
             if (error) throw error;
             Swal.fire('Berhasil', 'Request terkirim', 'success');
             setFormRequest({ wasteTypeId: '', weight: 5, date: '', time: '09:00', notes: '' });

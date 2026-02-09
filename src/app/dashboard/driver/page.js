@@ -136,7 +136,11 @@ export default function DriverDashboard() {
 
         // Menggunakan watchPosition agar lokasi terus terupdate realtime
         navigator.geolocation.watchPosition(
+<<<<<<< HEAD
             async (position) => {
+=======
+            (position) => {
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                 const { latitude, longitude, heading } = position.coords;
                 // OpenLayers menggunakan [Lon, Lat]
                 const newLoc = [longitude, latitude];
@@ -147,6 +151,7 @@ export default function DriverDashboard() {
                 }
 
                 setIsGpsActive(true);
+<<<<<<< HEAD
 
                 // --- REALTIME UPDATE TO DB ---
                 // Broadcast lokasi driver ke tabel 'drivers'
@@ -161,6 +166,8 @@ export default function DriverDashboard() {
                         console.error("Gagal update lokasi driver:", err);
                     }
                 }
+=======
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
             },
             (err) => {
                 console.warn("GPS Error:", err.message);
@@ -292,7 +299,11 @@ export default function DriverDashboard() {
             // Fix: Gunakan relasi standar `profiles(...)` bukan alias `profiles:profile_id(...)` yang mungkin error jika tidak didefinisikan
             const { data: activeTasks } = await supabase
                 .from('transactions')
+<<<<<<< HEAD
                 .select(`*, profiles(full_name, address, rt, rw, phone), waste_types(name, price_per_kg)`)
+=======
+                .select(`*, profiles(full_name, address, rt, rw, phone), waste_types(name)`)
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                 .neq('status', 'Done')
                 .order('created_at', { ascending: true });
 
@@ -308,13 +319,23 @@ export default function DriverDashboard() {
 
                 // Jika status Pending, cek wilayah
                 if (t.status === 'Pending') {
+<<<<<<< HEAD
                     // Jika driver tidak punya wilayah, tampilkan SEMUA task pending (Mode Global/Demo)
                     if (!myAreas || myAreas.length === 0) return true;
+=======
+                    // Jika driver tidak punya wilayah, tampilkan kosong (atau semua? Sebaiknya kosong agar rapi)
+                    if (!myAreas || myAreas.length === 0) return false;
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
 
                     const userRT = t.profiles?.rt;
                     const userRW = t.profiles?.rw;
 
                     // Cek apakah RT/RW user ada di list wilayah driver
+<<<<<<< HEAD
+=======
+                    // Asumsi: `areas` table punya kolom `rt` dan `rw`.
+                    // Cocok jika RW sama DAN (RT sama ATAU RT di area null/all) - sesuaikan dengan struktur data area
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                     return myAreas.some(area =>
                         area.rw == userRW &&
                         (area.rt == userRT || !area.rt) // !area.rt berarti mencakup satu RW full
@@ -324,6 +345,7 @@ export default function DriverDashboard() {
                 return false;
             });
 
+<<<<<<< HEAD
             // Generate Koordinat untuk Visualisasi Map
             const tasksWithCoords = filteredTasks.map(t => {
                 // PRIORITAS: Gunakan Data Real dari Database
@@ -343,6 +365,15 @@ export default function DriverDashboard() {
                     lng: finalLng
                 };
             });
+=======
+            // Generate Koordinat Dummy untuk Visualisasi Map
+            const tasksWithCoords = filteredTasks.map(t => ({
+                ...t,
+                // Koordinat acak di sekitar lokasi driver (Simulasi)
+                lat: myLocation[1] + (Math.random() * 0.015 - 0.0075),
+                lng: myLocation[0] + (Math.random() * 0.015 - 0.0075)
+            }));
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
 
             setTasks(tasksWithCoords);
 
@@ -383,6 +414,7 @@ export default function DriverDashboard() {
 
     const handleTaskAction = async (taskId, action) => {
         const myActiveTask = tasks.find(t => t.status === 'Process' && t.driver_id === currentUser.id);
+<<<<<<< HEAD
 
         // A. Jika Action = Process (Ambil Tugas)
         if (action === 'Process') {
@@ -470,6 +502,26 @@ export default function DriverDashboard() {
                     } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
                 }
             }
+=======
+        if (action === 'Process' && myActiveTask) return Swal.fire('Fokus!', 'Selesaikan tugas aktif dulu.', 'warning');
+
+        const result = await Swal.fire({
+            title: action === 'Process' ? 'Ambil Tugas?' : 'Selesaikan?',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Ya',
+            confirmButtonColor: '#10B981'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                const updatePayload = { status: action };
+                if (action === 'Process') updatePayload.driver_id = currentUser.id;
+                await supabase.from('transactions').update(updatePayload).eq('id', taskId);
+                Swal.fire('Berhasil!', 'Status diperbarui.', 'success');
+                fetchData();
+            } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
         }
     };
 

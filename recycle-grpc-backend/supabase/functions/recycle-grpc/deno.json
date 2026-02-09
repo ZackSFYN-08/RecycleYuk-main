@@ -1,5 +1,12 @@
+<<<<<<< HEAD
 {
   "imports": {
     "protobufjs/minimal": "https://esm.sh/protobufjs@7.2.4/minimal"
   }
+=======
+{
+  "imports": {
+    "protobufjs/minimal": "https://esm.sh/protobufjs@7.2.4/minimal"
+  }
+>>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
 }
