@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,84065,o=>{"use strict";function t(){return window.location.replace("/login"),null}o.s(["default",()=>t])}]);

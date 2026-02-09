@@ -1,0 +1,10 @@
+var R=require("../../../chunks/[turbopack]_runtime.js")("server/app/api/payment/route.js")
+R.c("server/chunks/39c63_next_47c66faa._.js")
+R.c("server/chunks/39c63_lodash_lodash_1e375abd.js")
+R.c("server/chunks/39c63_mime-db_48b1966b._.js")
+R.c("server/chunks/39c63_axios_dist_node_axios_cjs_94f06272._.js")
+R.c("server/chunks/39c63_e7c0b9a4._.js")
+R.c("server/chunks/[root-of-the-server]__93b7ce45._.js")
+R.c("server/chunks/16aac_RecycleYuk__next-internal_server_app_api_payment_route_actions_9311b8b1.js")
+R.m("[project]/Downloads/RecycleYuk-revision/RecycleYuk/RecycleYuk/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/Downloads/RecycleYuk-revision/RecycleYuk/RecycleYuk/src/app/api/payment/route.js [app-route] (ecmascript)\" } [app-route] (ecmascript)")
+module.exports=R.m("[project]/Downloads/RecycleYuk-revision/RecycleYuk/RecycleYuk/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/Downloads/RecycleYuk-revision/RecycleYuk/RecycleYuk/src/app/api/payment/route.js [app-route] (ecmascript)\" } [app-route] (ecmascript)").exports
