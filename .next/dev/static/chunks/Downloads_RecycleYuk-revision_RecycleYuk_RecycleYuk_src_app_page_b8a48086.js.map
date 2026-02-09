@@ -1,6 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///C:/Users/Administrator/Downloads/RecycleYuk-revision/RecycleYuk/RecycleYuk/src/app/page.js"],"sourcesContent":["\"use client\";\n\nexport default function Home() {\n  // Langsung redirect saat render\n  if (typeof window !== 'undefined') {\n    window.location.replace('/login');\n  }\n\n  return null;\n}"],"names":[],"mappings":";;;;AAAA;AAEe,SAAS;IACtB,gCAAgC;IAChC,wCAAmC;QACjC,OAAO,QAAQ,CAAC,OAAO,CAAC;IAC1B;IAEA,OAAO;AACT;KAPwB"}}]
-}
