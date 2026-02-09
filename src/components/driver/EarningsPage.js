@@ -1,6 +1,5 @@
-<<<<<<< HEAD
-'use client';
-import { useEffect, useState } from 'react';
+"use client";
+import { useEffect, useState } from "react";
 import { createClient } from '@supabase/supabase-js';
 import { calculateDriverEarnings, formatRupiah, exportToExcel } from '@/utils/enhancedHelpers';
 import { Wallet, TrendingUp, Calendar, Download, DollarSign, Package, Clock, Trophy } from 'lucide-react';
@@ -242,22 +241,6 @@ export default function DriverEarningsPage({ driverId }) {
                     Pembayaran komisi dilakukan setiap akhir bulan.
                 </p>
             </div>
-        </div>
-    );
-}
-=======
-'use client';
-import { useEffect, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { calculateDriverEarnings, formatRupiah, exportToExcel } from '@/utils/enhancedHelpers';
-import { Wallet, TrendingUp, Calendar, Download, DollarSign, Package, Clock, Trophy } from 'lucide-react';
-
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-
-export default function DriverEarningsPage({ driverId }) {
-    const [earnings, setEarnings] = useState(null);
-    const [transactions, setTransactions] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('month');
 
     useEffect(() => {

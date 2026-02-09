@@ -1,82 +1,86 @@
-'use client';
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle } from 'lucide-react';
-import Swal from 'sweetalert2';
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle } from "lucide-react";
+import Swal from "sweetalert2";
 
 // Initialize Supabase client
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 );
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    setError('');
+    setError("");
 
     try {
       // 1. Login ke Supabase Auth
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error: signInError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
       if (signInError) throw new Error(signInError.message);
-      if (!data.user) throw new Error('Login gagal');
+      if (!data.user) throw new Error("Login gagal");
 
       // 2. Ambil Data Profil & Role
       const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', data.user.id)
+        .from("profiles")
+        .select("role")
+        .eq("id", data.user.id)
         .single();
 
       if (profileError) {
         console.error("Gagal ambil profil:", profileError);
       }
 
-      const userRole = profileData?.role || 'user'; // Default 'user' jika null
+      const userRole = profileData?.role || "user"; // Default 'user' jika null
 
       // Simpan role di localStorage (Opsional)
-      localStorage.setItem('role', userRole);
+      localStorage.setItem("role", userRole);
 
       // 3. Tampilkan Sukses & Redirect
       Swal.fire({
-        icon: 'success',
-        title: 'Login Berhasil!',
-        text: `Selamat datang kembali, ${userRole === 'rt' ? 'Ketua RT' : userRole}.`,
+        icon: "success",
+        title: "Login Berhasil!",
+        text: `Selamat datang kembali, ${userRole === "rt" ? "Ketua RT" : userRole}.`,
         timer: 1500,
         showConfirmButton: false,
-        backdrop: `rgba(0,0,0,0.4)`
+        backdrop: `rgba(0,0,0,0.4)`,
       }).then(() => {
         // --- LOGIKA REDIRECT BERDASARKAN ROLE ---
-        if (userRole === 'admin') {
-          router.push('/dashboard/admin');
-        } else if (userRole === 'driver') {
-          router.push('/dashboard/driver');
-        } else if (userRole === 'rtrw' || userRole === 'rt') { // Support both 'rtrw' and 'rt'
-          router.push('/dashboard/rtrw');
+        if (userRole === "admin") {
+          router.push("/dashboard/admin");
+        } else if (userRole === "driver") {
+          router.push("/dashboard/driver");
+        } else if (userRole === "rtrw" || userRole === "rt") {
+          // Support both 'rtrw' and 'rt'
+          router.push("/dashboard/rtrw");
         } else {
-          router.push('/dashboard/user'); // Default Warga
+          router.push("/dashboard/user"); // Default Warga
         }
       });
-
     } catch (err) {
       Swal.fire({
-        icon: 'error',
-        title: 'Login Gagal',
-        text: err.message === 'Invalid login credentials' ? 'Email atau password salah.' : err.message,
-        confirmButtonColor: '#EF4444'
+        icon: "error",
+        title: "Login Gagal",
+        text:
+          err.message === "Invalid login credentials"
+            ? "Email atau password salah."
+            : err.message,
+        confirmButtonColor: "#EF4444",
       });
       setError(err.message);
     } finally {
@@ -88,43 +92,68 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-4 relative">
       {/* Background Animation */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-20 left-10 w-20 h-20 bg-green-200 rounded-full opacity-20 animate-bounce" style={{ animationDuration: '3s' }}></div>
-        <div className="absolute top-40 right-20 w-16 h-16 bg-emerald-300 rounded-full opacity-20 animate-bounce" style={{ animationDuration: '4s', animationDelay: '1s' }}></div>
-        <div className="absolute bottom-20 left-1/4 w-24 h-24 bg-teal-200 rounded-full opacity-20 animate-bounce" style={{ animationDuration: '5s', animationDelay: '2s' }}></div>
+        <div
+          className="absolute top-20 left-10 w-20 h-20 bg-green-200 rounded-full opacity-20 animate-bounce"
+          style={{ animationDuration: "3s" }}
+        ></div>
+        <div
+          className="absolute top-40 right-20 w-16 h-16 bg-emerald-300 rounded-full opacity-20 animate-bounce"
+          style={{ animationDuration: "4s", animationDelay: "1s" }}
+        ></div>
+        <div
+          className="absolute bottom-20 left-1/4 w-24 h-24 bg-teal-200 rounded-full opacity-20 animate-bounce"
+          style={{ animationDuration: "5s", animationDelay: "2s" }}
+        ></div>
       </div>
 
       <div className="w-full max-w-md relative z-10">
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
-
           {/* Header Hijau */}
           <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-8 text-white text-center relative overflow-hidden flex flex-col items-center justify-center">
             <div className="absolute inset-0 bg-white opacity-10 animate-pulse"></div>
             <div className="relative z-10">
-
               {/* --- BAGIAN LOGO (MENGGANTIKAN TEKS) --- */}
               <div className="mb-4 bg-white/20 p-3 rounded-2xl backdrop-blur-sm shadow-inner inline-block">
-                <img src="/images/logo.png" alt="RecycleYuk Logo" className="h-20 w-auto object-contain brightness-0 invert" />
+                <img
+                  src="/images/logo.png"
+                  alt="RecycleYuk Logo"
+                  className="h-20 w-auto object-contain brightness-0 invert"
+                />
               </div>
 
-              <p className="text-green-50 text-sm font-medium tracking-wide">Platform Manajemen Sampah Terpadu</p>
+              <p className="text-green-50 text-sm font-medium tracking-wide">
+                Platform Manajemen Sampah Terpadu
+              </p>
             </div>
           </div>
 
           <div className="p-8">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Selamat Datang!</h2>
-            <p className="text-gray-600 mb-6">Masuk untuk melanjutkan ke dashboard</p>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              Selamat Datang!
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Masuk untuk melanjutkan ke dashboard
+            </p>
 
             {/* Error Message */}
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm flex items-center gap-2 animate-pulse">
                 <AlertCircle size={16} />
-                {error === 'Invalid login credentials' ? 'Email atau password salah.' : error}
+                {error === "Invalid login credentials"
+                  ? "Email atau password salah."
+                  : error}
               </div>
             )}
 
-            <form onSubmit={handleLogin} className="space-y-5">
+            <form
+              onSubmit={handleLogin}
+              className="space-y-5"
+              suppressHydrationWarning
+            >
               <div className="relative group">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email
+                </label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-green-500 transition-colors" />
                   <input
@@ -134,12 +163,15 @@ export default function Login() {
                     className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all text-gray-900 placeholder:text-gray-400"
                     placeholder="nama@email.com"
                     required
+                    suppressHydrationWarning
                   />
                 </div>
               </div>
 
               <div className="relative group">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                </label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-green-500 transition-colors" />
                   <input
@@ -149,23 +181,36 @@ export default function Login() {
                     className="w-full pl-11 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all text-gray-900 placeholder:text-gray-400"
                     placeholder="••••••••"
                     required
+                    suppressHydrationWarning
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    suppressHydrationWarning
                   >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    {showPassword ? (
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
                   </button>
                 </div>
               </div>
 
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center cursor-pointer">
-                  <input type="checkbox" className="w-4 h-4 text-green-500 border-gray-300 rounded focus:ring-green-500" />
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 text-green-500 border-gray-300 rounded focus:ring-green-500"
+                  />
                   <span className="ml-2 text-gray-600">Ingat saya</span>
                 </label>
-                <button type="button" className="text-green-600 hover:text-green-700 font-medium">
+                <button
+                  type="button"
+                  className="text-green-600 hover:text-green-700 font-medium"
+                  suppressHydrationWarning
+                >
                   Lupa password?
                 </button>
               </div>
@@ -174,6 +219,7 @@ export default function Login() {
                 type="submit"
                 disabled={isLoading}
                 className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white py-3 rounded-lg font-semibold hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                suppressHydrationWarning
               >
                 {isLoading ? (
                   <>
@@ -191,11 +237,12 @@ export default function Login() {
 
             <div className="mt-6 text-center">
               <p className="text-gray-600">
-                Belum punya akun?{' '}
+                Belum punya akun?{" "}
                 <button
                   type="button"
-                  onClick={() => router.push('/register')}
+                  onClick={() => router.push("/register")}
                   className="text-green-600 hover:text-green-700 font-semibold"
+                  suppressHydrationWarning
                 >
                   Daftar sekarang
                 </button>
@@ -203,7 +250,12 @@ export default function Login() {
             </div>
           </div>
         </div>
-        <p className="text-center mt-6 text-gray-600 text-sm">© {new Date().getFullYear()} RecycleYuk. Semua hak dilindungi.</p>
+        <p
+          className="text-center mt-6 text-gray-600 text-sm"
+          suppressHydrationWarning
+        >
+          © {new Date().getFullYear()} RecycleYuk. Semua hak dilindungi.
+        </p>
       </div>
     </div>
   );

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 // Helper untuk meng-generate import icons yang dibutuhkan
 import { Plus, Send, X, CheckCheck } from 'lucide-react';
 
@@ -215,49 +214,6 @@ export const ComplaintDetailModal = ({ complaint, onClose }) => {
                 </button>
             </div>
         </div>
-    );
-};
-=======
-// Helper untuk meng-generate import icons yang dibutuhkan
-import { Plus, Send, X, CheckCheck } from 'lucide-react';
-
-// Render Pengaduan Component untuk User Dashboard
-export const renderPengaduan = (complaints, setIsComplaintModalOpen, setSelectedComplaint) => (
-    <div className="space-y-6 animate-in slide-in-from-right">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                    <MessageCircle size={20} /> Pengaduan Saya
-                </h3>
-                <button
-                    onClick={() => setIsComplaintModalOpen(true)}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 flex items-center gap-2"
-                >
-                    <Plus size={18} /> Buat Pengaduan
-                </button>
-            </div>
-
-            {complaints.length === 0 ? (
-                <div className="text-center py-12 text-gray-400 border-2 border-dashed rounded-lg">
-                    <MessageCircle size={48} className="mx-auto mb-3 opacity-30" />
-                    <p>Belum ada pengaduan.</p>
-                    <button
-                        onClick={() => setIsComplaintModalOpen(true)}
-                        className="mt-3 text-green-600 font-bold hover:underline"
-                    >
-                        Buat Pengaduan Pertama
-                    </button>
-                </div>
-            ) : (
-                <div className="space-y-4">
-                    {complaints.map(c => (
-                        <div
-                            key={c.id}
-                            className="border border-gray-200 rounded-xl p-5 hover:shadow-md transition cursor-pointer"
-                            onClick={() => setSelectedComplaint(c)}
-                        >
-                            <div className="flex justify-between items-start mb-3">
-                                <div className="flex-1">
                                     <h4 className="font-bold text-gray-800 text-lg flex items-center gap-2 flex-wrap">
                                         {c.subject}
                                         <span className={`px-2 py-0.5 rounded text-xs font-bold ${c.status === 'Resolved' ? 'bg-green-100 text-green-700' :

@@ -1,5 +1,4 @@
-<<<<<<< HEAD
-'use client';
+"use client";
 
 import { useEffect, useRef } from 'react';
 import Map from 'ol/Map';
@@ -191,73 +190,6 @@ export default function OpenLayersMap({
                 </button>
                 <div className="popup-content p-4 pt-6"></div>
             </div>
-        </div>
-    );
-}
-=======
-'use client';
-
-import { useEffect, useRef } from 'react';
-import Map from 'ol/Map';
-import View from 'ol/View';
-import TileLayer from 'ol/layer/Tile';
-import OSM from 'ol/source/OSM';
-import { fromLonLat } from 'ol/proj';
-import VectorLayer from 'ol/layer/Vector';
-import VectorSource from 'ol/source/Vector';
-import Feature from 'ol/Feature';
-import Point from 'ol/geom/Point';
-import { Style, Circle, Fill, Stroke, Text } from 'ol/style';
-import Overlay from 'ol/Overlay';
-import 'ol/ol.css';
-
-export default function OpenLayersMap({
-    center = [107.6191, -6.9175], // [lng, lat] - Bandung
-    zoom = 13,
-    markers = [],
-    height = '500px',
-    onMarkerClick = null
-}) {
-    const mapRef = useRef(null);
-    const mapInstanceRef = useRef(null);
-    const popupRef = useRef(null);
-    const popupCloserRef = useRef(null);
-    const overlayRef = useRef(null);
-    const vectorLayerRef = useRef(null);
-    const onMarkerClickRef = useRef(onMarkerClick);
-
-    // Update click handler ref when it changes
-    useEffect(() => {
-        onMarkerClickRef.current = onMarkerClick;
-    }, [onMarkerClick]);
-
-    // Initialize map ONCE
-    useEffect(() => {
-        if (!mapRef.current || mapInstanceRef.current) return;
-
-        // Create popup overlay
-        const overlay = new Overlay({
-            element: popupRef.current,
-            autoPan: {
-                animation: { duration: 250 }
-            }
-        });
-        overlayRef.current = overlay;
-
-        // Initialize map
-        const map = new Map({
-            target: mapRef.current,
-            layers: [
-                new TileLayer({
-                    source: new OSM()
-                })
-            ],
-            overlays: [overlay],
-            view: new View({
-                center: fromLonLat(center),
-                zoom: zoom
-            })
-        });
 
         mapInstanceRef.current = map;
 
