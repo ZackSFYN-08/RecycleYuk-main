@@ -33,6 +33,7 @@ export default function KepalaDashboard() {
     const [currentUser, setCurrentUser] = useState(null);
     const [transactions, setTransactions] = useState([]);
     const [complaints, setComplaints] = useState([]);
+    const [citizens, setCitizens] = useState([]); // New state for citizens
     const [usersCount, setUsersCount] = useState(0);
 
     // UI States
@@ -56,6 +57,7 @@ export default function KepalaDashboard() {
     // --- MENU CONFIGURATION ---
     const SIDEBAR_MENUS = [
         { id: 'dashboard', label: 'Ringkasan', icon: LayoutDashboard },
+        { id: 'warga', label: 'Daftar Warga', icon: Users }, // New menu
         { id: 'monitoring', label: 'Monitoring Global', icon: MapPin },
         { id: 'laporan', label: 'Laporan & Analitik', icon: FileText },
         { id: 'pengaduan', label: 'Pusat Pengaduan', icon: MessageSquare },
@@ -68,7 +70,30 @@ export default function KepalaDashboard() {
             setCurrentTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
         }, 1000);
         fetchData();
-        return () => clearInterval(timer);
+
+        // --- REALTIME SUBSCRIPTION ---
+        // Listen to changes in 'transactions' table to auto-update dashboard
+        const channel = supabase
+            .channel('rtrw-dashboard')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload) => {
+                // Determine if this change is relevant (e.g., status change to Done)
+                // Since we don't query complex filters here easily, just re-fetch data
+                fetchData();
+
+                // Optional: Show toast for relevant updates
+                if (payload.eventType === 'INSERT' || (payload.eventType === 'UPDATE' && payload.new.status === 'Pending')) {
+                    // New/Updated Transaction
+                }
+            })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'complaints' }, () => {
+                fetchData(); // Refresh complaints
+            })
+            .subscribe();
+
+        return () => {
+            clearInterval(timer);
+            supabase.removeChannel(channel);
+        };
     }, []);
 
     const fetchData = async () => {
@@ -79,14 +104,16 @@ export default function KepalaDashboard() {
             if (!user) { router.push('/login'); return; }
 
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            setCurrentUser({ ...user, ...profile });
+            const fullName = profile?.full_name || user.user_metadata?.full_name || 'Ketua RT/RW';
+            setCurrentUser({ ...user, ...profile, full_name: fullName });
 
             // Ensure profile loaded
             if (!profile) return;
 
             // B. Ambil Transaksi (Filter by RT/RW)
             let trxQuery = supabase
-                .select('*, profiles!inner(full_name, address, rt, rw), waste_types(name)')
+                .from('transactions')
+                .select('*, profiles!profile_id!inner(full_name, address, rt, rw), waste_types!waste_type_id(name)')
                 .order('created_at', { ascending: false });
 
             // Apply filters if RT/RW exists
@@ -94,33 +121,40 @@ export default function KepalaDashboard() {
             if (profile.rw) trxQuery = trxQuery.eq('profiles.rw', profile.rw);
 
             const { data: trx, error: trxError } = await trxQuery;
-            if (trxError) console.error("Error fetching transactions:", trxError);
+            if (trxError) {
+                console.error("Error fetching transactions:", trxError.message, trxError.details);
+                Swal.fire('Error', 'Gagal mengambil data transaksi: ' + trxError.message, 'error');
+            }
             setTransactions(trx || []);
 
             // C. Ambil Pengaduan (Filter by RT/RW)
             let compQuery = supabase
                 .from('complaints')
-                .select('*, profiles!inner(full_name, rt, rw)')
+                .select('*, profiles!user_id!inner(full_name, rt, rw)')
                 .order('created_at', { ascending: false });
 
             if (profile.rt) compQuery = compQuery.eq('profiles.rt', profile.rt);
             if (profile.rw) compQuery = compQuery.eq('profiles.rw', profile.rw);
 
             const { data: comp, error: compError } = await compQuery;
-            if (compError) console.error("Error fetching complaints:", compError);
+            if (compError) {
+                console.error("Error fetching complaints:", compError.message, compError.details);
+            }
             setComplaints(comp || []);
 
-            // D. Hitung Total User (Warga di RT/RW tersebut)
-            let userCountQuery = supabase
+            // D. Ambil List Warga (Warga di RT/RW tersebut)
+            let userQuery = supabase
                 .from('profiles')
-                .select('*', { count: 'exact', head: true })
-                .eq('role', 'user');
+                .select('*')
+                .eq('role', 'user')
+                .order('full_name', { ascending: true });
 
-            if (profile.rt) userCountQuery = userCountQuery.eq('rt', profile.rt);
-            if (profile.rw) userCountQuery = userCountQuery.eq('rw', profile.rw);
+            if (profile.rt) userQuery = userQuery.eq('rt', profile.rt);
+            if (profile.rw) userQuery = userQuery.eq('rw', profile.rw);
 
-            const { count } = await userCountQuery;
-            setUsersCount(count || 0);
+            const { data: userData, count } = await userQuery;
+            setCitizens(userData || []);
+            setUsersCount(count || userData?.length || 0);
 
         } catch (err) {
             console.error("Error fetching data:", err);
@@ -131,9 +165,15 @@ export default function KepalaDashboard() {
 
     // --- STATISTIK ---
     const stats = useMemo(() => {
-        const totalWeight = transactions.reduce((acc, curr) => acc + (curr.weight || 0), 0);
-        const totalIncome = transactions.reduce((acc, curr) => acc + (curr.total_price || 0), 0);
-        const pendingPickup = transactions.filter(t => t.status !== 'done').length;
+        const totalWeight = transactions
+            .filter(t => t.status === 'Done')
+            .reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
+
+        const totalIncome = transactions
+            .filter(t => t.status === 'Done')
+            .reduce((acc, curr) => acc + (Number(curr.total_price) || 0), 0);
+
+        const pendingPickup = transactions.filter(t => t.status !== 'Done').length;
         const pendingComplaint = complaints.filter(c => c.status === 'Pending').length;
 
         return { totalWeight, totalIncome, pendingPickup, pendingComplaint };
@@ -289,6 +329,49 @@ export default function KepalaDashboard() {
         </div>
     );
 
+    const renderWarga = () => {
+        const filteredWarga = citizens.filter(u =>
+            (searchQuery === '' || (u.full_name || '').toLowerCase().includes(searchQuery.toLowerCase()) || (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()))
+        );
+
+        return (
+            <div className="space-y-6 animate-in slide-in-from-right">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                    <div className="flex flex-col md:flex-row justify-between gap-4 mb-6">
+                        <h3 className="text-lg font-bold text-gray-800">Daftar Warga RT {currentUser?.rt} / RW {currentUser?.rw}</h3>
+                        <div className="relative w-full md:w-64">
+                            <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+                            <input className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm bg-gray-50 outline-none text-gray-800" placeholder="Cari nama atau email..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-gray-50 border-b">
+                                <tr><th className="p-4 text-gray-600">Nama</th><th className="p-4 text-gray-600">NIK</th><th className="p-4 text-gray-600">Email</th><th className="p-4 text-gray-600">Alamat</th><th className="p-4 text-gray-600">Status</th></tr>
+                            </thead>
+                            <tbody>
+                                {filteredWarga.length > 0 ? filteredWarga.map(w => (
+                                    <tr key={w.id} className="border-b hover:bg-gray-50">
+                                        <td className="p-4 flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold overflow-hidden text-xs">
+                                                {w.avatar_url ? <img src={w.avatar_url} className="w-full h-full object-cover" /> : w.full_name?.charAt(0)}
+                                            </div>
+                                            <span className="font-bold text-gray-800">{w.full_name || 'Tanpa Nama'}</span>
+                                        </td>
+                                        <td className="p-4 text-gray-600 font-mono text-xs">{w.nik || '-'}</td>
+                                        <td className="p-4 text-gray-600">{w.email}</td>
+                                        <td className="p-4 text-gray-600">{w.address || w.alamat || '-'}</td>
+                                        <td className="p-4"><span className="px-2 py-1 rounded-full bg-green-100 text-green-700 text-[10px] font-bold uppercase">Terverifikasi</span></td>
+                                    </tr>
+                                )) : <tr><td colSpan="5" className="p-8 text-center text-gray-400">Belum ada warga terdaftar di wilayah ini.</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const renderMonitoring = () => {
         const filtered = transactions.filter(t =>
             (filterCategory === 'All' || t.status === filterCategory) &&
@@ -309,7 +392,7 @@ export default function KepalaDashboard() {
                                 <option value="All">Semua Status</option>
                                 <option value="Pending">Pending</option>
                                 <option value="In Progress">Proses</option>
-                                <option value="done">Selesai</option>
+                                <option value="Done">Selesai</option>
                             </select>
                         </div>
                     </div>
@@ -321,7 +404,7 @@ export default function KepalaDashboard() {
                             <tbody>
                                 {filtered.map(t => (
                                     <tr key={t.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-4 text-gray-500 font-mono text-xs">{t.id.slice(0, 8)}</td>
+                                        <td className="p-4 text-gray-500 font-mono text-xs">{String(t.id).slice(0, 8)}</td>
                                         <td className="p-4 font-bold text-gray-800">{t.profiles?.full_name}</td>
                                         <td className="p-4 text-gray-600">{t.profiles?.alamat || t.profiles?.address || '-'}</td>
                                         <td className="p-4 text-gray-800 font-medium">{t.driver_name || '-'}</td>
@@ -478,6 +561,7 @@ export default function KepalaDashboard() {
     const renderContent = () => {
         switch (activePage) {
             case 'dashboard': return renderDashboard();
+            case 'warga': return renderWarga(); // New case
             case 'monitoring': return renderMonitoring();
             case 'laporan': return renderLaporan();
             case 'pengaduan': return renderPengaduan();

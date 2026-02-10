@@ -36,10 +36,10 @@ const DEFAULT_COORDS = [107.6191, -6.9175];
 const DRIVER_START = [107.6250, -6.9250];
 
 const WEIGHT_OPTIONS = [
-    { label: 'Ringan (0 - 5 KG)', value: 5 },
-    { label: 'Sedang (5 - 10 KG)', value: 10 },
-    { label: 'Berat (10 - 20 KG)', value: 20 },
-    { label: 'Sangat Berat (> 20 KG)', value: 30 }
+    { label: 'Ringan (0-2.5KG)', value: 2.5 },
+    { label: 'Sedang (2.5-5KG)', value: 5 },
+    { label: 'Berat (5-10KG)', value: 10 },
+    { label: 'Sangat Berat (>10KG)', value: 15 }
 ];
 
 const TIME_OPTIONS = [
@@ -74,11 +74,18 @@ export default function UserDashboard() {
     const [driverLocation, setDriverLocation] = useState(DRIVER_START);
     const [complaints, setComplaints] = useState([]);
     const [notifications, setNotifications] = useState([]);
+    const [rtrwHead, setRtrwHead] = useState(null); // New state for RT/RW Head info
     const [isChatOpen, setIsChatOpen] = useState(false);
 
     // Forms
     const [complaintForm, setComplaintForm] = useState({ title: '', category: '', content: '' });
-    const [formRequest, setFormRequest] = useState({ wasteTypeId: '', weight: 5, date: '', time: '09:00', notes: '' });
+    const [formRequest, setFormRequest] = useState({
+        wasteTypeId: '',
+        weight: 2.5,
+        date: new Date().toISOString().split('T')[0],
+        time: '09:00',
+        notes: ''
+    });
 
     // Payment & Modals
     const [paymentModal, setPaymentModal] = useState({ open: false, bill: null, step: 'method' });
@@ -307,8 +314,9 @@ export default function UserDashboard() {
             const driverFeature = new Feature({ geometry: new Point(fromLonLat(driverLocation)) });
             driverFeature.setStyle(new Style({
                 image: new Icon({
-                    src: 'https://cdn-icons-png.flaticon.com/512/4047/4047448.png', // Green truck icon
-                    scale: 0.10, anchor: [0.5, 1]
+                    src: '/images/delivery-truck.png', // Custom 3D Green Truck
+                    scale: 0.08,
+                    anchor: [0.5, 0.5]
                 })
             }));
             vectorSourceRef.current.addFeature(driverFeature);
@@ -345,11 +353,24 @@ export default function UserDashboard() {
                 const { data: notifData } = await supabase.from('notifications')
                     .select('*').or(`rt.eq.${profileData.rt},rt.is.null`).order('created_at', { ascending: false });
                 setNotifications(notifData || []);
+
+                // Fetch RT/RW Head
+                const { data: headData } = await supabase.from('profiles')
+                    .select('full_name, avatar_url')
+                    .eq('rt', profileData.rt)
+                    .eq('rw', profileData.rw)
+                    .eq('role', 'rt')
+                    .single();
+
+                if (headData) setRtrwHead(headData);
             }
 
             const { data: transactions } = await supabase
                 .from('transactions')
-                .select(`*, waste_types(name, price_per_kg), drivers:driver_id(full_name)`)
+                .select(`
+                    *,
+                    waste_types:waste_types!waste_type_id(name, price_per_kg)
+                `)
                 .eq('profile_id', user.id)
                 .order('created_at', { ascending: false });
 
@@ -366,20 +387,40 @@ export default function UserDashboard() {
                 const totalW = transactions.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
                 setStats({ totalWaste: totalW, lastPickup: transactions[0] ? new Date(transactions[0].created_at).toLocaleDateString('id-ID') : '-', points: Math.floor(totalW * 10) });
 
+                // Restore definition of active
                 const active = transactions.find(t => t.status === 'Pending' || t.status === 'Process');
+
                 if (active) {
+                    const isPending = active.status === 'Pending';
+                    let driverName = 'Driver';
+                    let vehicleInfo = 'Pickup Layanan';
+
+                    // Jika status Process, ambil data driver dari tabel drivers
+                    if (!isPending && active.driver_id) {
+                        const { data: driverData } = await supabase
+                            .from('drivers')
+                            .select('name, vehicle, plat_nomor')
+                            .eq('id', active.driver_id)
+                            .single();
+
+                        if (driverData) {
+                            driverName = driverData.name || 'Driver';
+                            const v = driverData.vehicle;
+                            const p = driverData.plat_nomor;
+                            if (v && p) vehicleInfo = `${v} - ${p}`;
+                            else if (v) vehicleInfo = v;
+                        }
+                    }
+
                     setActivePickup({
                         id: active.id,
-<<<<<<< HEAD
-                        driverId: active.driver_id, // Simpan Driver ID untuk tracking
-=======
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
-                        status: active.status === 'Process' ? 'Pengangkutan Aktif' : 'Menunggu Konfirmasi',
+                        driverId: active.driver_id,
+                        status: isPending ? 'Menunggu Konfirmasi' : 'Pengangkutan Aktif',
                         rawStatus: active.status,
-                        driver: active.drivers?.full_name || 'Mencari Driver...',
-                        vehicle: 'Pickup Layanan',
+                        driver: isPending ? 'Sedang Mencari Driver...' : driverName,
+                        vehicle: isPending ? '-' : vehicleInfo,
                         rating: 4.8,
-                        eta: active.status === 'Process' ? 'Sedang Jalan' : 'Menunggu'
+                        eta: isPending ? 'Menunggu' : 'Sedang Jalan'
                     });
                 } else { setActivePickup(null); }
             }
@@ -390,7 +431,6 @@ export default function UserDashboard() {
         } catch (error) { console.error("Error data:", error); } finally { setLoading(false); }
     };
 
-<<<<<<< HEAD
     // --- REALTIME DRIVER TRACKING ---
     useEffect(() => {
         let channel;
@@ -410,7 +450,6 @@ export default function UserDashboard() {
                     const { current_latitude, current_longitude } = payload.new;
                     if (current_latitude && current_longitude) {
                         setDriverLocation([current_longitude, current_latitude]);
-                        // Opsional: Hitung bearing/heading real jika data tersedia, atau biarkan 0
                     }
                 })
                 .subscribe();
@@ -421,15 +460,6 @@ export default function UserDashboard() {
         };
     }, [activePage, activePickup]);
 
-    /* 
-    // OLD SIMULATION REMOVED
-    // Simulasi Pergerakan Driver & Heading
-    // const [driverHeading, setDriverHeading] = useState(0);
-    // useEffect(() => { ... }) 
-    */
-
-=======
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
     const navigateTo = (pageId) => { setActivePage(pageId); setIsMobileMenuOpen(false); };
 
     const handleLogout = async () => {
@@ -473,17 +503,20 @@ export default function UserDashboard() {
 
     const handleRequestSubmit = async (e) => {
         e.preventDefault();
-        if (!formRequest.wasteTypeId) { Swal.fire('Gagal', 'Pilih sampah', 'error'); return; }
-<<<<<<< HEAD
+        console.log("Submitting Request:", formRequest);
 
-        // Cek apakah GPS aktif (opsional: bisa dipaksa harus aktif)
-        // if (!isGpsActive) { Swal.fire('Lokasi Diperlukan', 'Aktifkan GPS untuk request pickup.', 'warning'); return; }
+        if (!profile?.id) {
+            Swal.fire('Gagal', 'Profil Anda belum lengkap atau belum dimuat silakan muat ulang halaman.', 'error');
+            return;
+        }
+
+        if (!formRequest.wasteTypeId) { Swal.fire('Gagal', 'Pilih jenis sampah terlebih dahulu', 'error'); return; }
 
         try {
             const payload = {
                 profile_id: profile.id,
                 waste_type_id: formRequest.wasteTypeId,
-                weight: formRequest.weight,
+                weight: parseFloat(formRequest.weight) || 2.5,
                 status: 'Pending',
                 pickup_time: formRequest.time,
                 notes: formRequest.notes,
@@ -493,13 +526,15 @@ export default function UserDashboard() {
             };
 
             const { error } = await supabase.from('transactions').insert(payload);
-=======
-        try {
-            const { error } = await supabase.from('transactions').insert({ profile_id: profile.id, waste_type_id: formRequest.wasteTypeId, weight: formRequest.weight, status: 'Pending', pickup_time: formRequest.time, notes: formRequest.notes });
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
             if (error) throw error;
             Swal.fire('Berhasil', 'Request terkirim', 'success');
-            setFormRequest({ wasteTypeId: '', weight: 5, date: '', time: '09:00', notes: '' });
+            setFormRequest({
+                wasteTypeId: '',
+                weight: 2.5,
+                date: new Date().toISOString().split('T')[0],
+                time: '09:00',
+                notes: ''
+            });
             setActivePage('tracking');
         } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
     };
@@ -616,6 +651,33 @@ export default function UserDashboard() {
                     <div className="text-center py-8 text-gray-400 border-2 border-dashed rounded-lg bg-gray-50"><Truck size={32} className="mx-auto mb-2 opacity-50" /><p>Belum ada request pickup aktif.</p><button onClick={() => navigateTo('request')} className="mt-2 text-green-600 font-bold hover:underline">Buat Request Baru</button></div>
                 )}
             </div>
+
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Building size={20} className="text-emerald-600" /> Informasi Wilayah Anda</h3>
+                {rtrwHead ? (
+                    <div className="flex items-center gap-4 p-4 bg-emerald-50 rounded-xl border border-emerald-100">
+                        <div className="w-14 h-14 rounded-full bg-emerald-200 flex items-center justify-center text-emerald-700 font-bold overflow-hidden border-2 border-white shadow-md">
+                            {rtrwHead.avatar_url ? <img src={rtrwHead.avatar_url} className="w-full h-full object-cover" /> : rtrwHead.full_name?.charAt(0)}
+                        </div>
+                        <div>
+                            <p className="text-[10px] text-emerald-600 font-black uppercase tracking-[0.1em]">Ketua RT {profile?.rt} / RW {profile?.rw}</p>
+                            <p className="text-gray-900 font-bold text-lg">{rtrwHead.full_name}</p>
+                            <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-bold">
+                                <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                                Sedang Bertugas
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="p-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
+                        <p className="text-sm text-gray-500 italic">Informasi pengurus RT {profile?.rt || '?'} belum tersedia.</p>
+                    </div>
+                )}
+                <div className="mt-4 flex items-center gap-2 text-xs text-gray-400 bg-gray-50 p-2 rounded-lg">
+                    <AlertCircle size={14} />
+                    <span>Seluruh aktivitas pickup Anda dipantau oleh pengurus wilayah.</span>
+                </div>
+            </div>
         </div>
     );
 
@@ -681,7 +743,6 @@ export default function UserDashboard() {
                     <div className="space-y-4">
                         <div className="flex items-center gap-3"><div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-xl font-bold text-gray-500">BS</div><div><h4 className="font-bold text-gray-800">{activePickup.driver}</h4><p className="text-xs text-gray-500">{activePickup.vehicle}</p></div></div>
                         <div className="p-3 bg-yellow-50 text-yellow-800 rounded text-sm border border-yellow-200">Mohon bersiap, driver sedang menuju titik lokasi Anda.</div>
-                        <div className="grid grid-cols-2 gap-2"><button className="py-2 bg-green-50 text-green-700 rounded font-bold text-sm flex justify-center gap-1 hover:bg-green-100 transition"><MessageCircle size={16} /> Chat</button><button className="py-2 bg-blue-50 text-blue-700 rounded font-bold text-sm flex justify-center gap-1 hover:bg-blue-100 transition"><Phone size={16} /> Call</button></div>
                     </div>
                 ) : <p className="text-gray-500 text-center py-4">Belum ada pickup aktif.</p>}
             </div>

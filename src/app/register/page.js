@@ -24,12 +24,7 @@ export default function RegisterPage() {
     email: '',
     password: '',
     confirmPassword: '',
-<<<<<<< HEAD
-    platNomor: '', // Tambahan state plat nomor
-    kelurahan: '' // Tambahan state kelurahan
-=======
     platNomor: '' // Tambahan state plat nomor
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
   });
 
   const [role, setRole] = useState('user'); // Default role: Warga
@@ -57,13 +52,8 @@ export default function RegisterPage() {
     if (formData.nik.length !== 16 || isNaN(formData.nik)) {
       setError("NIK harus 16 digit angka!"); setLoading(false); return;
     }
-<<<<<<< HEAD
     // Validasi RT/RW wajib diisi (kecuali Admin)
     if ((role === 'user' || role === 'rt' || role === 'driver') && (!formData.rt || !formData.rw)) {
-=======
-    // Validasi RT/RW wajib diisi (kecuali Driver & Admin, opsional)
-    if ((role === 'user' || role === 'rt') && (!formData.rt || !formData.rw)) {
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
       setError("RT dan RW wajib diisi!"); setLoading(false); return;
     }
 
@@ -92,10 +82,6 @@ export default function RegisterPage() {
             role: role,        // Simpan Role
             rt: formData.rt,   // Simpan RT
             rw: formData.rw,   // Simpan RW
-<<<<<<< HEAD
-            kelurahan: formData.kelurahan, // Simpan Kelurahan
-=======
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
             updated_at: new Date().toISOString()
           },
             { onConflict: 'id' }
@@ -193,18 +179,8 @@ export default function RegisterPage() {
                 <div className="relative"><MapPin className="absolute left-3 top-4 text-gray-400" size={20} /><textarea name="alamat" value={formData.alamat} onChange={handleChange} rows="2" className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none resize-none text-gray-800" placeholder="Jalan, No Rumah" required></textarea></div>
               </div>
 
-<<<<<<< HEAD
-              <div className="relative group">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Kelurahan</label>
-                <div className="relative"><MapPin className="absolute left-3 top-3 text-gray-400" size={20} /><input type="text" name="kelurahan" value={formData.kelurahan} onChange={handleChange} className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-800" placeholder="Nama Kelurahan" required /></div>
-              </div>
-
               {/* INPUT RT & RW (Muncul untuk User, RT, dan Driver) */}
               {(role === 'user' || role === 'rt' || role === 'driver') && (
-=======
-              {/* INPUT RT & RW (Hanya muncul jika bukan Driver) */}
-              {(role === 'user' || role === 'rt') && (
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                 <div className="grid grid-cols-2 gap-4 bg-green-50 p-4 rounded-xl border border-green-100">
                   <div>
                     <label className="block text-sm font-bold text-green-800 mb-1">RT</label>

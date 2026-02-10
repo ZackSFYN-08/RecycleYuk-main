@@ -89,9 +89,20 @@ export default function AdminDashboard() {
 
         fetchAllData();
 
+        // --- REALTIME SUBSCRIPTION (Admin) ---
+        const channel = supabase
+            .channel('admin-dashboard')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => fetchAllData())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => fetchAllData())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchAllData())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'areas' }, () => fetchAllData())
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => fetchAllData())
+            .subscribe();
+
         return () => {
             clearInterval(timer);
             document.body.removeChild(script);
+            supabase.removeChannel(channel);
         };
     }, []);
 
@@ -103,7 +114,8 @@ export default function AdminDashboard() {
             if (!user) { router.push('/login'); return; }
 
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            setCurrentUser({ ...user, ...profile, newPassword: '' });
+            const finalName = profile?.full_name || user.user_metadata?.full_name || 'Administrator';
+            setCurrentUser({ ...user, ...profile, full_name: finalName, newPassword: '' });
 
             // B. App Settings
             const { data: settingData } = await supabase.from('app_settings').select('*').single();
@@ -130,9 +142,11 @@ export default function AdminDashboard() {
             const { data: areaData } = await supabase.from('areas').select('*, drivers(name)').order('created_at', { ascending: false });
             if (areaData) setAreas(areaData);
 
-            const { data: trxData } = await supabase.from('transactions')
-                .select('*, profiles(full_name, address), waste_types(name)')
+            const { data: trxData, error: trxError } = await supabase.from('transactions')
+                .select('*, profiles!profile_id(full_name, address), waste_types!waste_type_id(name)')
                 .order('created_at', { ascending: false });
+
+            if (trxError) console.error("Error fetching transactions:", trxError);
 
             if (trxData) {
                 setTransactions(trxData);
@@ -150,9 +164,17 @@ export default function AdminDashboard() {
                 }));
                 setPickups(mappedPickups);
 
-                // Hitung Keuangan
-                const totalIncome = trxData.reduce((acc, curr) => acc + (curr.total_price || 0), 0);
-                setFinanceStats({ income: totalIncome, expense: totalIncome * 0.3 });
+                // Hitung Keuangan (Hanya dari yang sudah 'Done')
+                const totalIncome = trxData
+                    .filter(t => t.status === 'Done')
+                    .reduce((acc, curr) => acc + (Number(curr.total_price) || 0), 0);
+
+                // Hitung Komisi Driver (15%)
+                const totalDriverCommission = trxData
+                    .filter(t => t.status === 'Done')
+                    .reduce((acc, curr) => acc + (Number(curr.total_price) || 0) * 0.15, 0);
+
+                setFinanceStats({ income: totalIncome, expense: totalIncome * 0.3, driverCommission: totalDriverCommission });
             }
 
         } catch (err) {
@@ -256,7 +278,7 @@ export default function AdminDashboard() {
                 ({ error } = await query);
             }
             else if (modalType === 'area') {
-                const payload = { kelurahan: formData.kelurahan, rw: formData.rw, rt: formData.rt, driver_id: formData.driverId || null };
+                const payload = { rw: formData.rw, rt: formData.rt, driver_id: formData.driverId || null };
                 const query = editingItem ? supabase.from('areas').update(payload).eq('id', editingItem.id) : supabase.from('areas').insert([payload]);
                 ({ error } = await query);
             }
@@ -598,6 +620,21 @@ export default function AdminDashboard() {
                             </div>
                         )}
 
+                        <div className="flex justify-between items-center text-sm border-t pt-3 mb-3 border-gray-100">
+                            <div>
+                                <p className="text-[10px] text-gray-400 font-bold uppercase">Total Komisi</p>
+                                <p className="font-bold text-green-600">
+                                    {formatRupiah(transactions
+                                        .filter(t => t.driver_id === d.id && t.status === 'Done')
+                                        .reduce((acc, curr) => acc + (Number(curr.total_price) || 0) * 0.15, 0))}
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] text-gray-400 font-bold uppercase">Total Trip</p>
+                                <p className="font-bold text-gray-700">{transactions.filter(t => t.driver_id === d.id && t.status === 'Done').length} Selesai</p>
+                            </div>
+                        </div>
+
                         <div className="flex justify-between items-center text-sm border-t pt-3 border-gray-100">
                             <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-medium">{d.shift}</span>
                             <span className={`px-3 py-1 rounded-full font-bold ${d.status === 'On Duty' ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-600'}`}>{d.status}</span>
@@ -621,7 +658,7 @@ export default function AdminDashboard() {
                             <button onClick={() => openModal('area', a)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Edit size={16} /></button>
                             <button onClick={() => handleDelete(a.id, 'area')} className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
                         </div>
-                        <h4 className="font-bold text-xl mb-1 text-gray-800">{a.kelurahan}</h4>
+                        <h4 className="font-bold text-xl mb-1 text-gray-800">Wilayah Operasional</h4>
                         <div className="flex gap-2 text-sm text-gray-600 mb-4">
                             <span className="bg-gray-100 px-2 py-1 rounded">RW: {a.rw}</span>
                             <span className="bg-gray-100 px-2 py-1 rounded">RT: {a.rt}</span>
@@ -723,16 +760,21 @@ export default function AdminDashboard() {
 
     const renderFinance = () => (
         <div className="space-y-6 animate-in slide-in-from-right">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-green-50 p-6 rounded-xl border border-green-200 shadow-sm">
                     <p className="text-green-800 font-medium mb-1">Total Pemasukan</p>
                     <h3 className="text-3xl font-bold text-green-900">{formatRupiah(financeStats.income)}</h3>
                     <p className="text-xs text-green-600 mt-2 flex items-center gap-1"><CheckCircle size={12} /> Dari transaksi selesai</p>
                 </div>
+                <div className="bg-blue-50 p-6 rounded-xl border border-blue-200 shadow-sm">
+                    <p className="text-blue-800 font-medium mb-1">Total Komisi Driver</p>
+                    <h3 className="text-3xl font-bold text-blue-900">{formatRupiah(financeStats.driverCommission || 0)}</h3>
+                    <p className="text-xs text-blue-600 mt-2 flex items-center gap-1"><Truck size={12} /> Berdasarkan 15% transaksi</p>
+                </div>
                 <div className="bg-red-50 p-6 rounded-xl border border-red-200 shadow-sm">
-                    <p className="text-red-800 font-medium mb-1">Estimasi Pengeluaran (30%)</p>
+                    <p className="text-red-800 font-medium mb-1">Operasional & Profit</p>
                     <h3 className="text-3xl font-bold text-red-900">{formatRupiah(financeStats.expense)}</h3>
-                    <p className="text-xs text-red-600 mt-2 flex items-center gap-1"><AlertCircle size={12} /> Biaya operasional & gaji</p>
+                    <p className="text-xs text-red-600 mt-2 flex items-center gap-1"><AlertCircle size={12} /> Biaya sistem & admin</p>
                 </div>
             </div>
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -974,7 +1016,7 @@ export default function AdminDashboard() {
                                 <select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.status || 'Off Duty'} onChange={e => setFormData({ ...formData, status: e.target.value })}><option value="On Duty">On Duty</option><option value="Off Duty">Off Duty</option></select>
                             </>}
 
-                            {modalType === 'area' && <><input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Kelurahan" value={formData.kelurahan || ''} onChange={e => setFormData({ ...formData, kelurahan: e.target.value })} required /><div className="grid grid-cols-2 gap-4"><input className="border p-2 rounded bg-white text-gray-800" placeholder="RW" value={formData.rw || ''} onChange={e => setFormData({ ...formData, rw: e.target.value })} /><input className="border p-2 rounded bg-white text-gray-800" placeholder="RT" value={formData.rt || ''} onChange={e => setFormData({ ...formData, rt: e.target.value })} /></div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driverId || ''} onChange={e => setFormData({ ...formData, driverId: e.target.value })}><option value="">Pilih Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
+                            {modalType === 'area' && <><div className="grid grid-cols-2 gap-4"><input className="border p-2 rounded bg-white text-gray-800" placeholder="RW" value={formData.rw || ''} onChange={e => setFormData({ ...formData, rw: e.target.value })} /><input className="border p-2 rounded bg-white text-gray-800" placeholder="RT" value={formData.rt || ''} onChange={e => setFormData({ ...formData, rt: e.target.value })} /></div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driverId || ''} onChange={e => setFormData({ ...formData, driverId: e.target.value })}><option value="">Pilih Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
 
                             {modalType === 'pickup' && <><div className="bg-gray-100 p-3 rounded text-sm text-gray-800 font-medium">User: {formData.user} ({formData.weightLabel})</div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.status || 'Pending'} onChange={e => setFormData({ ...formData, status: e.target.value })}><option value="Pending">Pending</option><option value="In Progress">Proses</option><option value="Done">Selesai</option><option value="Canceled">Dibatalkan</option></select><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driver || ''} onChange={e => setFormData({ ...formData, driver: e.target.value })}><option value="">Assign Driver</option>{drivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}</select></>}
 

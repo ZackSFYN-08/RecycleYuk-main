@@ -136,11 +136,7 @@ export default function DriverDashboard() {
 
         // Menggunakan watchPosition agar lokasi terus terupdate realtime
         navigator.geolocation.watchPosition(
-<<<<<<< HEAD
             async (position) => {
-=======
-            (position) => {
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                 const { latitude, longitude, heading } = position.coords;
                 // OpenLayers menggunakan [Lon, Lat]
                 const newLoc = [longitude, latitude];
@@ -151,7 +147,6 @@ export default function DriverDashboard() {
                 }
 
                 setIsGpsActive(true);
-<<<<<<< HEAD
 
                 // --- REALTIME UPDATE TO DB ---
                 // Broadcast lokasi driver ke tabel 'drivers'
@@ -166,8 +161,6 @@ export default function DriverDashboard() {
                         console.error("Gagal update lokasi driver:", err);
                     }
                 }
-=======
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
             },
             (err) => {
                 console.warn("GPS Error:", err.message);
@@ -284,7 +277,8 @@ export default function DriverDashboard() {
             if (!user) { router.push('/login'); return; }
 
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            setCurrentUser({ ...user, ...profile });
+            const fullName = profile?.full_name || user.user_metadata?.full_name || 'Driver';
+            setCurrentUser({ ...user, ...profile, full_name: fullName });
 
             const { data: dProfile } = await supabase.from('drivers').select('*').eq('id', user.id).single();
             if (dProfile) setDriverProfile(dProfile);
@@ -295,17 +289,21 @@ export default function DriverDashboard() {
                 .select('*')
                 .eq('driver_id', user.id);
 
-            // 2. Ambil Task Aktif (Pending & Process)
-            // Fix: Gunakan relasi standar `profiles(...)` bukan alias `profiles:profile_id(...)` yang mungkin error jika tidak didefinisikan
-            const { data: activeTasks } = await supabase
+
+            const { data: activeTasks, error: taskError } = await supabase
                 .from('transactions')
-<<<<<<< HEAD
-                .select(`*, profiles(full_name, address, rt, rw, phone), waste_types(name, price_per_kg)`)
-=======
-                .select(`*, profiles(full_name, address, rt, rw, phone), waste_types(name)`)
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
+                .select(`
+                    *,
+                    profiles:profiles!profile_id(full_name, address, rt, rw),
+                    waste_types:waste_types!waste_type_id(name, price_per_kg)
+                `)
                 .neq('status', 'Done')
                 .order('created_at', { ascending: true });
+
+            if (taskError) {
+                console.error('Error fetching tasks details:', JSON.stringify(taskError, null, 2));
+                console.error('Original error object:', taskError);
+            }
 
             // 3. Filter Task Berdasarkan Wilayah Kerja
             // Tampilkan task jika:
@@ -317,25 +315,18 @@ export default function DriverDashboard() {
                 // Jika sedang diproses saya, pasti muncul
                 if (isMyProcess) return true;
 
-                // Jika status Pending, cek wilayah
+                // Jika status Pending, cek wilayah DAN status On Duty
                 if (t.status === 'Pending') {
-<<<<<<< HEAD
+                    // Check if driver is On Duty
+                    if (dProfile?.status !== 'On Duty') return false;
+
                     // Jika driver tidak punya wilayah, tampilkan SEMUA task pending (Mode Global/Demo)
                     if (!myAreas || myAreas.length === 0) return true;
-=======
-                    // Jika driver tidak punya wilayah, tampilkan kosong (atau semua? Sebaiknya kosong agar rapi)
-                    if (!myAreas || myAreas.length === 0) return false;
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
 
                     const userRT = t.profiles?.rt;
                     const userRW = t.profiles?.rw;
 
                     // Cek apakah RT/RW user ada di list wilayah driver
-<<<<<<< HEAD
-=======
-                    // Asumsi: `areas` table punya kolom `rt` dan `rw`.
-                    // Cocok jika RW sama DAN (RT sama ATAU RT di area null/all) - sesuaikan dengan struktur data area
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
                     return myAreas.some(area =>
                         area.rw == userRW &&
                         (area.rt == userRT || !area.rt) // !area.rt berarti mencakup satu RW full
@@ -345,7 +336,6 @@ export default function DriverDashboard() {
                 return false;
             });
 
-<<<<<<< HEAD
             // Generate Koordinat untuk Visualisasi Map
             const tasksWithCoords = filteredTasks.map(t => {
                 // PRIORITAS: Gunakan Data Real dari Database
@@ -365,29 +355,26 @@ export default function DriverDashboard() {
                     lng: finalLng
                 };
             });
-=======
-            // Generate Koordinat Dummy untuk Visualisasi Map
-            const tasksWithCoords = filteredTasks.map(t => ({
-                ...t,
-                // Koordinat acak di sekitar lokasi driver (Simulasi)
-                lat: myLocation[1] + (Math.random() * 0.015 - 0.0075),
-                lng: myLocation[0] + (Math.random() * 0.015 - 0.0075)
-            }));
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
 
             setTasks(tasksWithCoords);
 
             // Hitung Pendapatan
             const { data: historyData } = await supabase
                 .from('transactions')
-                .select('*, profiles(full_name, address), waste_types(name)')
+                .select(`
+                    *,
+                    profiles:profiles!profile_id(full_name, address),
+                    waste_types:waste_types!waste_type_id(name)
+                `)
                 .eq('status', 'Done')
                 .eq('driver_id', user.id)
                 .order('updated_at', { ascending: false });
 
             setHistory(historyData || []);
-            const income = (historyData || []).reduce((acc, curr) => acc + (curr.total_price || 0), 0);
-            setTotalIncome(income);
+
+            // Gunakan helper perinci untuk hitung Komisi (15%)
+            const earnings = calculateDriverEarnings(historyData || []);
+            setTotalIncome(earnings.total);
 
         } catch (err) {
             console.error("Error data:", err);
@@ -414,7 +401,6 @@ export default function DriverDashboard() {
 
     const handleTaskAction = async (taskId, action) => {
         const myActiveTask = tasks.find(t => t.status === 'Process' && t.driver_id === currentUser.id);
-<<<<<<< HEAD
 
         // A. Jika Action = Process (Ambil Tugas)
         if (action === 'Process') {
@@ -502,26 +488,6 @@ export default function DriverDashboard() {
                     } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
                 }
             }
-=======
-        if (action === 'Process' && myActiveTask) return Swal.fire('Fokus!', 'Selesaikan tugas aktif dulu.', 'warning');
-
-        const result = await Swal.fire({
-            title: action === 'Process' ? 'Ambil Tugas?' : 'Selesaikan?',
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonText: 'Ya',
-            confirmButtonColor: '#10B981'
-        });
-
-        if (result.isConfirmed) {
-            try {
-                const updatePayload = { status: action };
-                if (action === 'Process') updatePayload.driver_id = currentUser.id;
-                await supabase.from('transactions').update(updatePayload).eq('id', taskId);
-                Swal.fire('Berhasil!', 'Status diperbarui.', 'success');
-                fetchData();
-            } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
->>>>>>> d5956acd52d8fd280f895235942efa52d8477f33
         }
     };
 
@@ -627,8 +593,8 @@ export default function DriverDashboard() {
 
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center transition hover:shadow-md border-l-4 border-l-green-500">
                     <div>
-                        <p className="text-gray-500 text-xs font-bold uppercase tracking-wide">Total Pendapatan</p>
-                        <h3 className="text-2xl font-bold text-green-700 mt-1">Rp {totalIncome.toLocaleString('id-ID')}</h3>
+                        <p className="text-gray-500 text-xs font-bold uppercase tracking-wide">Estimasi Komisi (15%)</p>
+                        <h3 className="text-2xl font-bold text-green-700 mt-1">{formatRupiah(totalIncome)}</h3>
                     </div>
                     <div className="bg-green-50 p-3 rounded-xl text-green-600 border border-green-100"><Wallet size={28} /></div>
                 </div>
@@ -793,12 +759,26 @@ export default function DriverDashboard() {
                         ))}
 
                         {pendingTasks.length === 0 && (
-                            <div className="col-span-full py-16 text-center text-gray-400 bg-white border-2 border-dashed border-gray-200 rounded-2xl">
-                                <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <Clock size={40} className="text-gray-300" />
+                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-center bg-white border-2 border-dashed border-gray-200 rounded-2xl">
+                                <div className="bg-gray-50 w-24 h-24 rounded-full flex items-center justify-center mb-6">
+                                    <Truck size={48} className="text-gray-300" />
                                 </div>
-                                <p className="text-lg font-medium text-gray-600">Tidak ada order pending saat ini.</p>
-                                <p className="text-sm text-gray-400">Silakan tunggu notifikasi order baru.</p>
+                                <h3 className="text-xl font-bold text-gray-800 mb-2">
+                                    {driverProfile?.status !== 'On Duty' ? 'Status Anda Off Duty' : 'Belum Ada Tugas'}
+                                </h3>
+                                <p className="text-gray-500 max-w-sm px-4">
+                                    {driverProfile?.status !== 'On Duty'
+                                        ? 'Silakan aktifkan status "On Duty" di profil Anda untuk melihat permintaan pickup yang tersedia di wilayah Anda.'
+                                        : 'Saat ini belum ada permintaan penjemputan sampah baru di wilayah operasional Anda.'}
+                                </p>
+                                {driverProfile?.status !== 'On Duty' && (
+                                    <button
+                                        onClick={() => navigateTo('profile')}
+                                        className="mt-8 bg-green-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-green-700 transition-all shadow-lg shadow-green-100 flex items-center gap-2"
+                                    >
+                                        <User size={20} /> Buka Profil & Aktifkan
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1015,13 +995,45 @@ export default function DriverDashboard() {
                     </div>
 
                     {/* Total All Time */}
-                    <div className="bg-gradient-to-br from-amber-400 to-orange-500 p-6 rounded-xl text-white shadow-lg transform hover:scale-105 transition">
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition">
                         <div className="flex items-center justify-between mb-2">
-                            <p className="opacity-90 font-medium">Total Keseluruhan</p>
-                            <Trophy size={20} className="opacity-80" />
+                            <p className="text-gray-500 font-medium">Total Akumulasi</p>
+                            <Trophy size={20} className="text-amber-500" />
                         </div>
-                        <h3 className="text-2xl md:text-3xl font-bold mb-1">{formatRupiah(earnings.total)}</h3>
-                        <p className="text-sm opacity-80">{earnings.transactionCount} transaksi</p>
+                        <h3 className="text-2xl md:text-3xl font-bold text-gray-800 mb-1">{formatRupiah(earnings.total)}</h3>
+                        <p className="text-sm text-gray-500">{earnings.transactionCount} transaksi selesai</p>
+                    </div>
+
+                    {/* Saldo Tersedia & Withdraw */}
+                    <div className="bg-gradient-to-br from-green-600 to-emerald-700 p-6 rounded-xl text-white shadow-lg lg:col-span-1">
+                        <div className="flex items-center justify-between mb-2">
+                            <p className="opacity-90 font-medium">Saldo Tersedia</p>
+                            <DollarSign size={20} className="opacity-80" />
+                        </div>
+                        <h3 className="text-2xl md:text-3xl font-bold mb-3">{formatRupiah(earnings.total)}</h3>
+                        <button
+                            onClick={() => {
+                                if (earnings.total <= 0) {
+                                    Swal.fire('Opps', 'Saldo Anda masih kosong', 'info');
+                                    return;
+                                }
+                                Swal.fire({
+                                    title: 'Tarik Saldo',
+                                    text: `Ajukan penarikan saldo sebesar ${formatRupiah(earnings.total)}?`,
+                                    icon: 'question',
+                                    showCancelButton: true,
+                                    confirmButtonText: 'Ya, Tarik Sekarang',
+                                    confirmButtonColor: '#10b981'
+                                }).then((result) => {
+                                    if (result.isConfirmed) {
+                                        Swal.fire('Permintaan Terkirim', 'Admin akan memproses pencairan saldo Anda.', 'success');
+                                    }
+                                });
+                            }}
+                            className="w-full py-2 bg-white text-green-700 rounded-lg font-bold hover:bg-green-50 transition shadow-md text-sm"
+                        >
+                            Tarik Saldo
+                        </button>
                     </div>
                 </div>
 
