@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server'
+import { logError, logInfo } from '@/utils/logger';
 
 const SUPABASE_FUNCTION_URL = 'https://bvigrmajwdfpavxmxefl.supabase.co/functions/v1/recycle-grpc';
 
 export async function POST(request) {
   try {
-    console.log('[API Proxy] Request received');
-
+    logInfo('GrpcProxy', 'Request received');
+    
     // Get method name dari query params
     const { searchParams } = new URL(request.url);
     const methodName = searchParams.get('method');
-
-    console.log('[API Proxy] Method:', methodName);
-
+    
+    logInfo('GrpcProxy', 'Method', methodName);
+    
     if (!methodName) {
       return NextResponse.json(
         { error: 'Method name is required' },
@@ -21,15 +22,15 @@ export async function POST(request) {
 
     // Get authorization header
     const authHeader = request.headers.get('authorization');
-    console.log('[API Proxy] Has auth:', !!authHeader);
-
+    logInfo('GrpcProxy', 'Has auth', !!authHeader);
+    
     // Read binary body
     const body = await request.arrayBuffer();
-    console.log(`[API Proxy] Body size: ${body.byteLength} bytes`);
-
+    logInfo('GrpcProxy', 'Body size', body.byteLength);
+    
     // Forward request ke Supabase Edge Function
-    console.log('[API Proxy] Forwarding to:', SUPABASE_FUNCTION_URL);
-
+    logInfo('GrpcProxy', 'Forwarding to', SUPABASE_FUNCTION_URL);
+    
     const response = await fetch(SUPABASE_FUNCTION_URL, {
       method: 'POST',
       headers: {
@@ -40,15 +41,15 @@ export async function POST(request) {
       body: body,
     });
 
-    console.log(`[API Proxy] Supabase response:`, {
+    logInfo('GrpcProxy', 'Supabase response', {
       status: response.status,
       statusText: response.statusText
     });
-
+    
     // Forward response
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[API Proxy] Error:`, errorText);
+      logError('GrpcProxy', new Error('Supabase error'), errorText);
       return new NextResponse(errorText, {
         status: response.status,
         headers: {
@@ -59,20 +60,21 @@ export async function POST(request) {
 
     // Return binary response
     const responseBuffer = await response.arrayBuffer();
-    console.log(`[API Proxy] Success, response size: ${responseBuffer.byteLength} bytes`);
-
+    logInfo('GrpcProxy', 'Success, response size', responseBuffer.byteLength);
+    
     return new NextResponse(responseBuffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/octet-stream',
       },
     });
-
+    
   } catch (error) {
-    console.error('[API Proxy] Fatal error:', error);
+    logError('GrpcProxy', error);
     return NextResponse.json(
       { error: error.message, stack: error.stack },
       { status: 500 }
     );
   }
+
 }

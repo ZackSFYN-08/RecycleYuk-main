@@ -12,6 +12,12 @@ import {
 import Swal from 'sweetalert2';
 import { calculateDriverEarnings, formatRupiah, exportToExcel, uploadAvatar } from '@/utils/enhancedHelpers';
 import ChatModal from '@/components/shared/ChatModal';
+import {
+    getDriverProfile, fetchGlobalTasks,
+    acceptTask, finishTask, updateDriverLocation,
+    supabase
+} from '@/utils/services';
+import useAuth from '@/hooks/useAuth';
 
 // --- OPENLAYERS IMPORTS ---
 import 'ol/ol.css';
@@ -28,16 +34,14 @@ import { fromLonLat } from 'ol/proj';
 import { Icon, Style, Stroke, Circle as CircleStyle, Fill } from 'ol/style';
 
 // --- INISIALISASI SUPABASE ---
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+// Logic moved to services.js
 
 // Koordinat Default (Bandung) [Lon, Lat]
 const CENTER_COORDS = [107.6191, -6.9175];
 
 export default function DriverDashboard() {
     const router = useRouter();
+    const { user: authUser, loading: authLoading } = useAuth();
 
     // --- 1. STATE MANAGEMENT ---
     const [mounted, setMounted] = useState(false);
@@ -84,37 +88,24 @@ export default function DriverDashboard() {
             setCurrentTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
         }, 1000);
 
-        fetchData();
         startGpsTracking();
 
         const channel = supabase
             .channel('driver-dashboard')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions' }, (payload) => {
-                // Play notification sound for new orders
-                try {
-                    const audio = new Audio('/sounds/notification.mp3');
-                    audio.volume = 0.5;
-                    audio.play().catch(() => { });
-                } catch (e) { }
-
-                // Show toast notification
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions' }, () => {
+                // Play notification sound
+                try { new Audio('/sounds/notification.mp3').play().catch(() => { }); } catch (e) { }
                 Swal.fire({
                     title: '🚛 Order Baru!',
                     text: 'Ada permintaan pickup baru menunggu Anda.',
                     icon: 'info',
-                    toast: true,
-                    position: 'top-end',
-                    showConfirmButton: false,
-                    timer: 5000,
-                    timerProgressBar: true,
-                    background: '#ecfdf5',
-                    color: '#065f46'
+                    toast: true, position: 'top-end', showConfirmButton: false, timer: 5000,
+                    background: '#ecfdf5', color: '#065f46'
                 });
-
-                fetchData();
+                refreshTasks();
             })
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'transactions' }, () => {
-                fetchData();
+                refreshTasks();
             })
             .subscribe();
 
@@ -128,43 +119,53 @@ export default function DriverDashboard() {
         };
     }, []);
 
+    useEffect(() => {
+        const initializeDashboard = async () => {
+            if (authLoading) return;
+            setLoading(true);
+            try {
+                if (!authUser) { router.push('/login'); return; }
+
+                // A. User Profile (Driver)
+                setCurrentUser(authUser);
+
+                // B. Driver Profile detail
+                const profile = await getDriverProfile(authUser.id);
+                setDriverProfile(profile);
+
+                // C. Load tasks & history
+                await refreshTasks();
+            } catch (err) {
+                console.error("Error fetching driver data:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        initializeDashboard();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [authUser, authLoading]);
+
     // --- 3. GPS LOGIC (WATCH POSITION) ---
     const [myHeading, setMyHeading] = useState(0);
 
     const startGpsTracking = () => {
         if (!navigator.geolocation) return;
 
-        // Menggunakan watchPosition agar lokasi terus terupdate realtime
         navigator.geolocation.watchPosition(
             async (position) => {
                 const { latitude, longitude, heading } = position.coords;
-                // OpenLayers menggunakan [Lon, Lat]
                 const newLoc = [longitude, latitude];
                 setMyLocation(newLoc);
-
-                if (heading !== null && !isNaN(heading)) {
-                    setMyHeading(heading * (Math.PI / 180)); // Convert to radians
-                }
-
+                if (heading !== null && !isNaN(heading)) setMyHeading(heading * (Math.PI / 180));
                 setIsGpsActive(true);
 
-                // --- REALTIME UPDATE TO DB ---
-                // Broadcast lokasi driver ke tabel 'drivers'
+                // --- REALTIME UPDATE TO DB VIA SERVICE ---
                 if (driverProfile?.id) {
-                    try {
-                        await supabase.from('drivers').update({
-                            current_latitude: latitude,
-                            current_longitude: longitude,
-                            last_location_update: new Date()
-                        }).eq('id', driverProfile.id);
-                    } catch (err) {
-                        console.error("Gagal update lokasi driver:", err);
-                    }
+                    await updateDriverLocation(driverProfile.id, latitude, longitude);
                 }
             },
-            (err) => {
-                console.warn("GPS Error:", err.message);
-            },
+            (err) => console.warn("GPS Error:", err.message),
             { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
         );
     };
@@ -219,7 +220,6 @@ export default function DriverDashboard() {
 
         // A. Marker Saya (Driver)
         if (isGpsActive) {
-            // Marker Titik Biru (Akurasi)
             const accuracyFeature = new Feature({ geometry: new Point(fromLonLat(myLocation)) });
             accuracyFeature.setStyle(new Style({
                 image: new CircleStyle({
@@ -230,7 +230,6 @@ export default function DriverDashboard() {
             }));
             vectorSourceRef.current.addFeature(accuracyFeature);
 
-            // Marker Truk
             const driverFeature = new Feature({ geometry: new Point(fromLonLat(myLocation)) });
             driverFeature.setStyle(new Style({
                 image: new Icon({
@@ -242,14 +241,9 @@ export default function DriverDashboard() {
         }
 
         // B. Rute (Garis Hijau)
-        // Note: Icon Sampah sudah DIHAPUS sesuai permintaan
         tasks.filter(t => t.status === 'Pending' || (t.status === 'Process' && t.driver_id === currentUser?.id)).forEach(t => {
             if (t.lng && t.lat) {
                 const taskLoc = [t.lng, t.lat];
-
-                // HAPUS ICON SAMPAH (Tidak ada kode Feature Point untuk Task)
-
-                // Garis Rute (Hanya muncul jika sedang proses jemput & GPS aktif)
                 if (t.status === 'Process' && isGpsActive) {
                     const routeFeature = new Feature({
                         geometry: new LineString([fromLonLat(myLocation), fromLonLat(taskLoc)])
@@ -265,122 +259,65 @@ export default function DriverDashboard() {
 
     useEffect(() => {
         updateMapMarkers();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tasks, myLocation, isGpsActive, currentUser, activePage]);
 
 
-    // --- 4. DATA FETCHING ---
-
-
-    const fetchData = async () => {
+    // --- DATA FETCHING (REFACTORED) ---
+    const initializeDashboard = async () => {
         try {
-            const { data: { user } } = await supabase.auth.getUser();
+            setLoading(true);
+            const user = await getCurrentUser();
             if (!user) { router.push('/login'); return; }
+            setCurrentUser(user);
 
-            const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            const fullName = profile?.full_name || user.user_metadata?.full_name || 'Driver';
-            setCurrentUser({ ...user, ...profile, full_name: fullName });
-
-            const { data: dProfile } = await supabase.from('drivers').select('*').eq('id', user.id).single();
+            const dProfile = await getDriverProfile(user.id);
             if (dProfile) setDriverProfile(dProfile);
 
-            // 1. Ambil Wilayah Kerja Driver (Assigned Areas)
-            const { data: myAreas } = await supabase
-                .from('areas')
-                .select('*')
-                .eq('driver_id', user.id);
-
-
-            const { data: activeTasks, error: taskError } = await supabase
-                .from('transactions')
-                .select(`
-                    *,
-                    profiles:profiles!profile_id(full_name, address, rt, rw),
-                    waste_types:waste_types!waste_type_id(name, price_per_kg)
-                `)
-                .neq('status', 'Done')
-                .order('created_at', { ascending: true });
-
-            if (taskError) {
-                console.error('Error fetching tasks details:', JSON.stringify(taskError, null, 2));
-                console.error('Original error object:', taskError);
-            }
-
-            // 3. Filter Task Berdasarkan Wilayah Kerja
-            // Tampilkan task jika:
-            // a. Status 'Process' DAN diambil oleh driver ini (prioritas tertinggi, abaikan wilayah)
-            // b. Status 'Pending' DAN lokasi user (RT/RW) cocok dengan salah satu wilayah kerja driver
-            const filteredTasks = (activeTasks || []).filter(t => {
-                const isMyProcess = t.status === 'Process' && t.driver_id === user.id;
-
-                // Jika sedang diproses saya, pasti muncul
-                if (isMyProcess) return true;
-
-                // Jika status Pending, cek wilayah DAN status On Duty
-                if (t.status === 'Pending') {
-                    // Check if driver is On Duty
-                    if (dProfile?.status !== 'On Duty') return false;
-
-                    // Jika driver tidak punya wilayah, tampilkan SEMUA task pending (Mode Global/Demo)
-                    if (!myAreas || myAreas.length === 0) return true;
-
-                    const userRT = t.profiles?.rt;
-                    const userRW = t.profiles?.rw;
-
-                    // Cek apakah RT/RW user ada di list wilayah driver
-                    return myAreas.some(area =>
-                        area.rw == userRW &&
-                        (area.rt == userRT || !area.rt) // !area.rt berarti mencakup satu RW full
-                    );
-                }
-
-                return false;
-            });
-
-            // Generate Koordinat untuk Visualisasi Map
-            const tasksWithCoords = filteredTasks.map(t => {
-                // PRIORITAS: Gunakan Data Real dari Database
-                let finalLat = t.latitude;
-                let finalLng = t.longitude;
-
-                // FALLBACK: Jika Data Lama (latitude/longitude null), generate dummy di sekitar driver
-                // agar tidak error di map.
-                if (!finalLat || !finalLng) {
-                    finalLat = myLocation[1] + (Math.random() * 0.015 - 0.0075);
-                    finalLng = myLocation[0] + (Math.random() * 0.015 - 0.0075);
-                }
-
-                return {
-                    ...t,
-                    lat: finalLat,
-                    lng: finalLng
-                };
-            });
-
-            setTasks(tasksWithCoords);
-
-            // Hitung Pendapatan
+            // Fetch History (This could be moved to service too, but simple enough here)
             const { data: historyData } = await supabase
                 .from('transactions')
-                .select(`
-                    *,
-                    profiles:profiles!profile_id(full_name, address),
-                    waste_types:waste_types!waste_type_id(name)
-                `)
+                .select('*, profiles(full_name, address), waste_types(name)')
                 .eq('status', 'Done')
                 .eq('driver_id', user.id)
                 .order('updated_at', { ascending: false });
 
             setHistory(historyData || []);
+            const income = (historyData || []).reduce((acc, curr) => acc + (curr.total_price || 0), 0);
+            setTotalIncome(income);
 
-            // Gunakan helper perinci untuk hitung Komisi (15%)
-            const earnings = calculateDriverEarnings(historyData || []);
-            setTotalIncome(earnings.total);
+            // Re-fetch tasks after profile is loaded
+            await refreshTasks(user, dProfile);
 
-        } catch (err) {
-            console.error("Error data:", err);
-        } finally {
-            setLoading(false);
-        }
+        } catch (err) { console.error("Init Error:", err); } finally { setLoading(false); }
+    };
+
+    const refreshTasks = async (user = currentUser, dProfile = driverProfile) => {
+        if (!user) return;
+        try {
+            const activeTasks = await fetchGlobalTasks();
+            // ... rest of the code is fine, but let's ensure we use the passed dProfile
+            const currentDProfile = dProfile || driverProfile;
+
+            const filteredTasks = (activeTasks || []).filter(t => {
+                const isMyProcess = t.status === 'Process' && t.driver_id === user.id;
+                if (isMyProcess) return true;
+                if (t.status === 'Pending') {
+                    if (currentDProfile?.status !== 'On Duty') return false;
+                    return true;
+                }
+                return false;
+            });
+
+            // Generate Coords
+            const tasksWithCoords = filteredTasks.map(t => {
+                let finalLat = t.latitude || (myLocation[1] + (Math.random() * 0.015 - 0.0075));
+                let finalLng = t.longitude || (myLocation[0] + (Math.random() * 0.015 - 0.0075));
+                return { ...t, lat: finalLat, lng: finalLng };
+            });
+
+            setTasks(tasksWithCoords);
+        } catch (err) { console.error("Refresh Tasks Error:", err); }
     };
 
     const navigateTo = (pageId) => { setActivePage(pageId); setIsMobileMenuOpen(false); };
@@ -402,7 +339,6 @@ export default function DriverDashboard() {
     const handleTaskAction = async (taskId, action) => {
         const myActiveTask = tasks.find(t => t.status === 'Process' && t.driver_id === currentUser.id);
 
-        // A. Jika Action = Process (Ambil Tugas)
         if (action === 'Process') {
             if (myActiveTask) return Swal.fire('Fokus!', 'Selesaikan tugas aktif dulu.', 'warning');
 
@@ -416,20 +352,17 @@ export default function DriverDashboard() {
 
             if (result.isConfirmed) {
                 try {
-                    await supabase.from('transactions').update({ status: 'Process', driver_id: currentUser.id }).eq('id', taskId);
+                    await acceptTask(taskId, currentUser.id, currentUser.full_name);
                     Swal.fire('Berhasil!', 'Segera menuju lokasi!', 'success');
-                    fetchData();
+                    refreshTasks();
                 } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
             }
         }
-
-        // B. Jika Action = Done (Selesaikan Tugas)
         else if (action === 'Done') {
             const taskToFinish = tasks.find(t => t.id === taskId);
             const pricePerKg = taskToFinish?.waste_types?.price_per_kg || 0;
             const wasteName = taskToFinish?.waste_types?.name || 'Sampah';
 
-            // Modal Input Berat Akhir
             const { value: finalWeight } = await Swal.fire({
                 title: 'Selesaikan Tugas',
                 html: `
@@ -440,27 +373,19 @@ export default function DriverDashboard() {
                     </div>
                 `,
                 input: 'number',
-                inputAttributes: {
-                    min: '0.1',
-                    step: '0.1',
-                    placeholder: 'Contoh: 5.5'
-                },
+                inputAttributes: { min: '0.1', step: '0.1', placeholder: 'Contoh: 5.5' },
                 inputValue: taskToFinish?.weight || '',
                 showCancelButton: true,
                 confirmButtonText: 'Hitung & Selesai',
                 confirmButtonColor: '#3b82f6',
                 preConfirm: (weight) => {
-                    if (!weight || weight <= 0) {
-                        Swal.showValidationMessage('Masukkan berat yang valid!');
-                    }
+                    if (!weight || weight <= 0) Swal.showValidationMessage('Masukkan berat yang valid!');
                     return weight;
                 }
             });
 
             if (finalWeight) {
                 const totalPrice = Math.round(parseFloat(finalWeight) * pricePerKg);
-
-                // Konfirmasi Akhir dengan Harga
                 const confirmResult = await Swal.fire({
                     title: 'Konfirmasi Akhir',
                     html: `
@@ -469,27 +394,20 @@ export default function DriverDashboard() {
                             <p class="text-xl font-bold text-green-600 mt-2">Total: Rp ${totalPrice.toLocaleString()}</p>
                         </div>
                     `,
-                    icon: 'info',
-                    showCancelButton: true,
-                    confirmButtonText: 'Simpan & Selesai'
+                    icon: 'info', showCancelButton: true, confirmButtonText: 'Simpan & Selesai'
                 });
 
                 if (confirmResult.isConfirmed) {
                     try {
-                        await supabase.from('transactions').update({
-                            status: 'Done',
-                            final_weight: parseFloat(finalWeight),
-                            total_price: totalPrice,
-                            weight: parseFloat(finalWeight) // Update estimasi weight jadi real weight juga
-                        }).eq('id', taskId);
-
+                        await finishTask(taskId, parseFloat(finalWeight), totalPrice);
                         Swal.fire('Tugas Selesai!', `Saldo Rp ${totalPrice.toLocaleString()} dicatat.`, 'success');
-                        fetchData();
+                        initializeDashboard(); // Refresh history too
                     } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
                 }
             }
         }
     };
+
 
     const handleDriverStatusToggle = async () => {
         if (!driverProfile) return;
@@ -509,6 +427,7 @@ export default function DriverDashboard() {
             await supabase.from('drivers').update({ status: newStatus }).eq('id', driverProfile.id);
             setDriverProfile({ ...driverProfile, status: newStatus });
             Swal.fire('Status', `Anda sekarang ${newStatus}`, 'success');
+            refreshTasks(currentUser, { ...driverProfile, status: newStatus });
         } catch (err) { Swal.fire('Error', 'Gagal update status', 'error'); }
     };
 
@@ -518,7 +437,7 @@ export default function DriverDashboard() {
             await supabase.from('profiles').update({ full_name: currentUser.full_name, address: currentUser.address }).eq('id', currentUser.id);
             if (driverProfile) await supabase.from('drivers').update({ name: currentUser.full_name, vehicle: driverProfile.vehicle }).eq('id', driverProfile.id);
             Swal.fire('Sukses', 'Profil berhasil disimpan!', 'success');
-            fetchData();
+            initializeDashboard();
         } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
     };
 
@@ -593,8 +512,8 @@ export default function DriverDashboard() {
 
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center transition hover:shadow-md border-l-4 border-l-green-500">
                     <div>
-                        <p className="text-gray-500 text-xs font-bold uppercase tracking-wide">Estimasi Komisi (15%)</p>
-                        <h3 className="text-2xl font-bold text-green-700 mt-1">{formatRupiah(totalIncome)}</h3>
+                        <p className="text-gray-500 text-xs font-bold uppercase tracking-wide">Total Pendapatan</p>
+                        <h3 className="text-2xl font-bold text-green-700 mt-1">Rp {totalIncome.toLocaleString('id-ID')}</h3>
                     </div>
                     <div className="bg-green-50 p-3 rounded-xl text-green-600 border border-green-100"><Wallet size={28} /></div>
                 </div>
@@ -648,7 +567,7 @@ export default function DriverDashboard() {
                             </div>
                             <div className="bg-yellow-50 p-3 rounded-xl border border-yellow-100 text-sm text-yellow-800 flex gap-2">
                                 <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                                <p><strong>Catatan:</strong> "{task.notes || 'Tidak ada catatan'}"</p>
+                                <p><strong>Catatan:</strong> &quot;{task.notes || 'Tidak ada catatan'}&quot;</p>
                             </div>
                         </div>
                     </div>
@@ -759,26 +678,12 @@ export default function DriverDashboard() {
                         ))}
 
                         {pendingTasks.length === 0 && (
-                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-center bg-white border-2 border-dashed border-gray-200 rounded-2xl">
-                                <div className="bg-gray-50 w-24 h-24 rounded-full flex items-center justify-center mb-6">
-                                    <Truck size={48} className="text-gray-300" />
+                            <div className="col-span-full py-16 text-center text-gray-400 bg-white border-2 border-dashed border-gray-200 rounded-2xl">
+                                <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <Clock size={40} className="text-gray-300" />
                                 </div>
-                                <h3 className="text-xl font-bold text-gray-800 mb-2">
-                                    {driverProfile?.status !== 'On Duty' ? 'Status Anda Off Duty' : 'Belum Ada Tugas'}
-                                </h3>
-                                <p className="text-gray-500 max-w-sm px-4">
-                                    {driverProfile?.status !== 'On Duty'
-                                        ? 'Silakan aktifkan status "On Duty" di profil Anda untuk melihat permintaan pickup yang tersedia di wilayah Anda.'
-                                        : 'Saat ini belum ada permintaan penjemputan sampah baru di wilayah operasional Anda.'}
-                                </p>
-                                {driverProfile?.status !== 'On Duty' && (
-                                    <button
-                                        onClick={() => navigateTo('profile')}
-                                        className="mt-8 bg-green-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-green-700 transition-all shadow-lg shadow-green-100 flex items-center gap-2"
-                                    >
-                                        <User size={20} /> Buka Profil & Aktifkan
-                                    </button>
-                                )}
+                                <p className="text-lg font-medium text-gray-600">Tidak ada order pending saat ini.</p>
+                                <p className="text-sm text-gray-400">Silakan tunggu notifikasi order baru.</p>
                             </div>
                         )}
                     </div>
@@ -826,7 +731,7 @@ export default function DriverDashboard() {
                                         </div>
                                         <div className="bg-yellow-50 p-3 rounded-xl border border-yellow-100 text-sm text-yellow-800 flex gap-2">
                                             <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                                            <p><strong>Catatan:</strong> "{task.notes || 'Tidak ada catatan'}"</p>
+                                            <p><strong>Catatan:</strong> &quot;{task.notes || 'Tidak ada catatan'}&quot;</p>
                                         </div>
                                     </div>
                                 </div>
@@ -995,45 +900,13 @@ export default function DriverDashboard() {
                     </div>
 
                     {/* Total All Time */}
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition">
+                    <div className="bg-gradient-to-br from-amber-400 to-orange-500 p-6 rounded-xl text-white shadow-lg transform hover:scale-105 transition">
                         <div className="flex items-center justify-between mb-2">
-                            <p className="text-gray-500 font-medium">Total Akumulasi</p>
-                            <Trophy size={20} className="text-amber-500" />
+                            <p className="opacity-90 font-medium">Total Keseluruhan</p>
+                            <Trophy size={20} className="opacity-80" />
                         </div>
-                        <h3 className="text-2xl md:text-3xl font-bold text-gray-800 mb-1">{formatRupiah(earnings.total)}</h3>
-                        <p className="text-sm text-gray-500">{earnings.transactionCount} transaksi selesai</p>
-                    </div>
-
-                    {/* Saldo Tersedia & Withdraw */}
-                    <div className="bg-gradient-to-br from-green-600 to-emerald-700 p-6 rounded-xl text-white shadow-lg lg:col-span-1">
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="opacity-90 font-medium">Saldo Tersedia</p>
-                            <DollarSign size={20} className="opacity-80" />
-                        </div>
-                        <h3 className="text-2xl md:text-3xl font-bold mb-3">{formatRupiah(earnings.total)}</h3>
-                        <button
-                            onClick={() => {
-                                if (earnings.total <= 0) {
-                                    Swal.fire('Opps', 'Saldo Anda masih kosong', 'info');
-                                    return;
-                                }
-                                Swal.fire({
-                                    title: 'Tarik Saldo',
-                                    text: `Ajukan penarikan saldo sebesar ${formatRupiah(earnings.total)}?`,
-                                    icon: 'question',
-                                    showCancelButton: true,
-                                    confirmButtonText: 'Ya, Tarik Sekarang',
-                                    confirmButtonColor: '#10b981'
-                                }).then((result) => {
-                                    if (result.isConfirmed) {
-                                        Swal.fire('Permintaan Terkirim', 'Admin akan memproses pencairan saldo Anda.', 'success');
-                                    }
-                                });
-                            }}
-                            className="w-full py-2 bg-white text-green-700 rounded-lg font-bold hover:bg-green-50 transition shadow-md text-sm"
-                        >
-                            Tarik Saldo
-                        </button>
+                        <h3 className="text-2xl md:text-3xl font-bold mb-1">{formatRupiah(earnings.total)}</h3>
+                        <p className="text-sm opacity-80">{earnings.transactionCount} transaksi</p>
                     </div>
                 </div>
 

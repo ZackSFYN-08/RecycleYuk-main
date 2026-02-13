@@ -38,7 +38,7 @@ export const formatRupiah = (amount) => {
 
 // Calculate Driver Earnings
 export const calculateDriverEarnings = (transactions) => {
-    const completedTransactions = transactions.filter(t => (t.status || '').toLowerCase() === 'done');
+    const completedTransactions = transactions.filter(t => t.status === 'done');
 
     const earnings = {
         today: 0,
@@ -77,9 +77,9 @@ export const calculateDriverEarnings = (transactions) => {
 export const calculateEnhancedStats = (transactions, userRole) => {
     const stats = {
         total: transactions.length,
-        pending: transactions.filter(t => (t.status || '').toLowerCase() === 'pending').length,
-        inProgress: transactions.filter(t => (t.status || '').toLowerCase() === 'process' || (t.status || '').toLowerCase() === 'in progress').length,
-        completed: transactions.filter(t => (t.status || '').toLowerCase() === 'done').length,
+        pending: transactions.filter(t => t.status === 'Pending').length,
+        inProgress: transactions.filter(t => t.status === 'In Progress').length,
+        completed: transactions.filter(t => t.status === 'done').length,
         totalWeight: transactions.reduce((sum, t) => sum + (Number(t.weight) || 0), 0),
         totalRevenue: transactions.reduce((sum, t) => sum + (t.total_price || 0), 0)
     };
@@ -301,7 +301,7 @@ export const uploadAvatar = async (file, userId) => {
     }
 };
 
-export default {
+const enhancedHelpers = {
     uploadAvatar,
     calculateRewardPoints,
     getRewardBadge,
@@ -317,6 +317,7 @@ export default {
     estimateETA,
     generateChartColors,
     filterByDateRange,
-    groupByPeriod,
-    uploadAvatar
+    groupByPeriod
 };
+
+export default enhancedHelpers;

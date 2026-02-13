@@ -10,17 +10,23 @@ import {
     CheckCircle, X, Truck, Eye, FileText, Send, Star, Map, Filter,
     User, LogOut, Clock, ChevronLeft, ChevronRight, Menu, BarChart3, Wallet, Bell, Recycle, Edit2
 } from 'lucide-react';
-import { exportToExcel, formatRupiah, uploadAvatar } from '@/utils/enhancedHelpers';
+import { exportToExcel, formatRupiah, uploadAvatar, getStatusColor } from '@/utils/enhancedHelpers';
 import Swal from 'sweetalert2';
+import {
+    logout,
+    updateProfile,
+    fetchRTRWData,
+    respondToComplaint,
+    supabase
+} from '@/utils/services';
+import useAuth from '@/hooks/useAuth';
 
 // --- INISIALISASI SUPABASE ---
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+// Logic moved to services.js
 
 export default function KepalaDashboard() {
     const router = useRouter();
+    const { user: authUser, loading: authLoading } = useAuth();
 
     // --- STATE MANAGEMENT ---
     const [activePage, setActivePage] = useState('dashboard');
@@ -33,7 +39,6 @@ export default function KepalaDashboard() {
     const [currentUser, setCurrentUser] = useState(null);
     const [transactions, setTransactions] = useState([]);
     const [complaints, setComplaints] = useState([]);
-    const [citizens, setCitizens] = useState([]); // New state for citizens
     const [usersCount, setUsersCount] = useState(0);
 
     // UI States
@@ -57,7 +62,6 @@ export default function KepalaDashboard() {
     // --- MENU CONFIGURATION ---
     const SIDEBAR_MENUS = [
         { id: 'dashboard', label: 'Ringkasan', icon: LayoutDashboard },
-        { id: 'warga', label: 'Daftar Warga', icon: Users }, // New menu
         { id: 'monitoring', label: 'Monitoring Global', icon: MapPin },
         { id: 'laporan', label: 'Laporan & Analitik', icon: FileText },
         { id: 'pengaduan', label: 'Pusat Pengaduan', icon: MessageSquare },
@@ -69,126 +73,56 @@ export default function KepalaDashboard() {
         const timer = setInterval(() => {
             setCurrentTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
         }, 1000);
-        fetchData();
-
-        // --- REALTIME SUBSCRIPTION ---
-        // Listen to changes in 'transactions' table to auto-update dashboard
-        const channel = supabase
-            .channel('rtrw-dashboard')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload) => {
-                // Determine if this change is relevant (e.g., status change to Done)
-                // Since we don't query complex filters here easily, just re-fetch data
-                fetchData();
-
-                // Optional: Show toast for relevant updates
-                if (payload.eventType === 'INSERT' || (payload.eventType === 'UPDATE' && payload.new.status === 'Pending')) {
-                    // New/Updated Transaction
-                }
-            })
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'complaints' }, () => {
-                fetchData(); // Refresh complaints
-            })
-            .subscribe();
-
-        return () => {
-            clearInterval(timer);
-            supabase.removeChannel(channel);
-        };
+        return () => clearInterval(timer);
     }, []);
 
-    const fetchData = async () => {
-        setLoading(true);
+    useEffect(() => {
+        const initializeDashboard = async () => {
+            if (authLoading) return;
+            setLoading(true);
+            try {
+                // A. Cek User
+                if (!authUser) { router.push('/login'); return; }
+                setCurrentUser(authUser);
+
+                // B. Ambil Data (RT/RW)
+                await refreshData(authUser);
+            } catch (err) {
+                console.error("Error fetching data:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        initializeDashboard();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [authUser, authLoading]);
+
+    const refreshData = async (user = currentUser) => {
+        if (!user || (!user.rt && !user.rw)) return;
         try {
-            // A. Cek User
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) { router.push('/login'); return; }
-
-            const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            const fullName = profile?.full_name || user.user_metadata?.full_name || 'Ketua RT/RW';
-            setCurrentUser({ ...user, ...profile, full_name: fullName });
-
-            // Ensure profile loaded
-            if (!profile) return;
-
-            // B. Ambil Transaksi (Filter by RT/RW)
-            let trxQuery = supabase
-                .from('transactions')
-                .select('*, profiles!profile_id!inner(full_name, address, rt, rw), waste_types!waste_type_id(name)')
-                .order('created_at', { ascending: false });
-
-            // Apply filters if RT/RW exists
-            if (profile.rt) trxQuery = trxQuery.eq('profiles.rt', profile.rt);
-            if (profile.rw) trxQuery = trxQuery.eq('profiles.rw', profile.rw);
-
-            const { data: trx, error: trxError } = await trxQuery;
-            if (trxError) {
-                console.error("Error fetching transactions:", trxError.message, trxError.details);
-                Swal.fire('Error', 'Gagal mengambil data transaksi: ' + trxError.message, 'error');
-            }
-            setTransactions(trx || []);
-
-            // C. Ambil Pengaduan (Filter by RT/RW)
-            let compQuery = supabase
-                .from('complaints')
-                .select('*, profiles!user_id!inner(full_name, rt, rw)')
-                .order('created_at', { ascending: false });
-
-            if (profile.rt) compQuery = compQuery.eq('profiles.rt', profile.rt);
-            if (profile.rw) compQuery = compQuery.eq('profiles.rw', profile.rw);
-
-            const { data: comp, error: compError } = await compQuery;
-            if (compError) {
-                console.error("Error fetching complaints:", compError.message, compError.details);
-            }
-            setComplaints(comp || []);
-
-            // D. Ambil List Warga (Warga di RT/RW tersebut)
-            let userQuery = supabase
-                .from('profiles')
-                .select('*')
-                .eq('role', 'user')
-                .order('full_name', { ascending: true });
-
-            if (profile.rt) userQuery = userQuery.eq('rt', profile.rt);
-            if (profile.rw) userQuery = userQuery.eq('rw', profile.rw);
-
-            const { data: userData, count } = await userQuery;
-            setCitizens(userData || []);
-            setUsersCount(count || userData?.length || 0);
-
+            const data = await fetchRTRWData(user.rt, user.rw);
+            setTransactions(data.transactions);
+            setComplaints(data.complaints);
+            setUsersCount(data.userCount);
         } catch (err) {
-            console.error("Error fetching data:", err);
-        } finally {
-            setLoading(false);
+            console.error("Refresh failed:", err);
         }
     };
 
     // --- STATISTIK ---
     const stats = useMemo(() => {
-        const totalWeight = transactions
-            .filter(t => t.status === 'Done')
-            .reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
-
-        const totalIncome = transactions
-            .filter(t => t.status === 'Done')
-            .reduce((acc, curr) => acc + (Number(curr.total_price) || 0), 0);
-
-        const pendingPickup = transactions.filter(t => t.status !== 'Done').length;
+        const totalWeight = transactions.reduce((acc, curr) => acc + (curr.weight || 0), 0);
+        const totalIncome = transactions.reduce((acc, curr) => acc + (curr.total_price || 0), 0);
+        const pendingPickup = transactions.filter(t => t.status !== 'done').length;
         const pendingComplaint = complaints.filter(c => c.status === 'Pending').length;
 
         return { totalWeight, totalIncome, pendingPickup, pendingComplaint };
     }, [transactions, complaints]);
 
     // --- HELPERS ---
-    const getStatusColor = (status) => {
-        const s = (status || '').toLowerCase();
-        if (s === 'done' || s === 'selesai' || s === 'resolved') return 'bg-green-100 text-green-800 border-green-200';
-        if (s === 'in progress' || s === 'proses') return 'bg-blue-100 text-blue-800 border-blue-200';
-        if (s === 'pending' || s === 'menunggu') return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    };
 
-    const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
+    const handleLogout = async () => { await logout(); router.push('/login'); };
 
     // --- EXPORT EXCEL HANDLER ---
     const handleExportExcel = async (data) => {
@@ -218,26 +152,24 @@ export default function KepalaDashboard() {
     const handleSendResponse = async () => {
         if (!responseMessage.trim()) return Swal.fire('Error', "Respon tidak boleh kosong", 'warning');
         try {
-            await supabase.from('complaints').update({
-                response: responseMessage,
-                status: 'Resolved'
-            }).eq('id', selectedComplaint.id);
+            await respondToComplaint(selectedComplaint.id, responseMessage);
 
             Swal.fire('Terkirim', "Tanggapan berhasil dikirim!", 'success');
             setResponseMessage('');
             setSelectedComplaint(null);
-            fetchData();
+            refreshData();
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
     };
 
     const handleUpdateProfile = async (e) => {
         e.preventDefault();
         try {
-            await supabase.from('profiles').update({
+            await updateProfile(currentUser.id, {
                 full_name: currentUser.full_name,
                 alamat: currentUser.alamat
-            }).eq('id', currentUser.id);
+            });
             Swal.fire('Sukses', "Profil RT/RW berhasil diperbarui!", 'success');
+            refreshData();
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
     };
 
@@ -257,8 +189,7 @@ export default function KepalaDashboard() {
             if (!publicUrl) throw new Error('Gagal mendapatkan URL gambar.');
 
             // Update profile in DB
-            const { error } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id);
-            if (error) throw error;
+            await updateProfile(currentUser.id, { avatar_url: publicUrl });
 
             setCurrentUser(prev => ({ ...prev, avatar_url: publicUrl }));
             Swal.fire('Sukses', 'Foto profil berhasil diperbarui!', 'success');
@@ -329,49 +260,6 @@ export default function KepalaDashboard() {
         </div>
     );
 
-    const renderWarga = () => {
-        const filteredWarga = citizens.filter(u =>
-            (searchQuery === '' || (u.full_name || '').toLowerCase().includes(searchQuery.toLowerCase()) || (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()))
-        );
-
-        return (
-            <div className="space-y-6 animate-in slide-in-from-right">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                    <div className="flex flex-col md:flex-row justify-between gap-4 mb-6">
-                        <h3 className="text-lg font-bold text-gray-800">Daftar Warga RT {currentUser?.rt} / RW {currentUser?.rw}</h3>
-                        <div className="relative w-full md:w-64">
-                            <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                            <input className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm bg-gray-50 outline-none text-gray-800" placeholder="Cari nama atau email..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-                        </div>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
-                            <thead className="bg-gray-50 border-b">
-                                <tr><th className="p-4 text-gray-600">Nama</th><th className="p-4 text-gray-600">NIK</th><th className="p-4 text-gray-600">Email</th><th className="p-4 text-gray-600">Alamat</th><th className="p-4 text-gray-600">Status</th></tr>
-                            </thead>
-                            <tbody>
-                                {filteredWarga.length > 0 ? filteredWarga.map(w => (
-                                    <tr key={w.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-4 flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold overflow-hidden text-xs">
-                                                {w.avatar_url ? <img src={w.avatar_url} className="w-full h-full object-cover" /> : w.full_name?.charAt(0)}
-                                            </div>
-                                            <span className="font-bold text-gray-800">{w.full_name || 'Tanpa Nama'}</span>
-                                        </td>
-                                        <td className="p-4 text-gray-600 font-mono text-xs">{w.nik || '-'}</td>
-                                        <td className="p-4 text-gray-600">{w.email}</td>
-                                        <td className="p-4 text-gray-600">{w.address || w.alamat || '-'}</td>
-                                        <td className="p-4"><span className="px-2 py-1 rounded-full bg-green-100 text-green-700 text-[10px] font-bold uppercase">Terverifikasi</span></td>
-                                    </tr>
-                                )) : <tr><td colSpan="5" className="p-8 text-center text-gray-400">Belum ada warga terdaftar di wilayah ini.</td></tr>}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
     const renderMonitoring = () => {
         const filtered = transactions.filter(t =>
             (filterCategory === 'All' || t.status === filterCategory) &&
@@ -392,7 +280,7 @@ export default function KepalaDashboard() {
                                 <option value="All">Semua Status</option>
                                 <option value="Pending">Pending</option>
                                 <option value="In Progress">Proses</option>
-                                <option value="Done">Selesai</option>
+                                <option value="done">Selesai</option>
                             </select>
                         </div>
                     </div>
@@ -404,10 +292,10 @@ export default function KepalaDashboard() {
                             <tbody>
                                 {filtered.map(t => (
                                     <tr key={t.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-4 text-gray-500 font-mono text-xs">{String(t.id).slice(0, 8)}</td>
+                                        <td className="p-4 text-gray-500 font-mono text-xs">{t.id.slice(0, 8)}</td>
                                         <td className="p-4 font-bold text-gray-800">{t.profiles?.full_name}</td>
                                         <td className="p-4 text-gray-600">{t.profiles?.alamat || t.profiles?.address || '-'}</td>
-                                        <td className="p-4 text-gray-800 font-medium">{t.driver_name || '-'}</td>
+                                        <td className="p-4 text-gray-800 font-medium">{t.drivers?.name || t.driver_name || '-'}</td>
                                         <td className="p-4 text-gray-800">{t.weight} Kg</td>
                                         <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold border ${getStatusColor(t.status)}`}>{t.status}</span></td>
                                         <td className="p-4"><button onClick={() => setSelectedTransaction(t)} className="text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100"><Eye size={16} /></button></td>
@@ -505,7 +393,7 @@ export default function KepalaDashboard() {
                                 </div>
                                 {c.status === 'Pending' && <button onClick={() => setSelectedComplaint(c)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700"><Send size={14} /> Tanggapi</button>}
                             </div>
-                            <p className="text-gray-700 bg-gray-50 p-3 rounded-lg border border-gray-100 text-sm italic">"{c.content}"</p>
+                            <p className="text-gray-700 bg-gray-50 p-3 rounded-lg border border-gray-100 text-sm italic">&quot;{c.content}&quot;</p>
                             {c.response && (
                                 <div className="mt-3 pl-4 border-l-4 border-emerald-500">
                                     <p className="text-xs text-emerald-600 font-bold mb-1">Tanggapan RT/RW:</p>
@@ -561,7 +449,6 @@ export default function KepalaDashboard() {
     const renderContent = () => {
         switch (activePage) {
             case 'dashboard': return renderDashboard();
-            case 'warga': return renderWarga(); // New case
             case 'monitoring': return renderMonitoring();
             case 'laporan': return renderLaporan();
             case 'pengaduan': return renderPengaduan();
@@ -645,7 +532,7 @@ export default function KepalaDashboard() {
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-xl p-6 max-w-lg w-full shadow-2xl">
                         <div className="flex justify-between mb-4 border-b pb-4"><h3 className="font-bold text-lg text-gray-800">Tanggapi Pengaduan</h3><button onClick={() => setSelectedComplaint(null)}><X size={20} className="text-gray-400" /></button></div>
-                        <div className="bg-gray-50 p-3 rounded mb-4 text-sm border border-gray-200"><p className="font-bold text-gray-700 mb-1">Pesan Masuk:</p><p className="italic text-gray-600">"{selectedComplaint.content}"</p></div>
+                        <div className="bg-gray-50 p-3 rounded mb-4 text-sm border border-gray-200"><p className="font-bold text-gray-700 mb-1">Pesan Masuk:</p><p className="italic text-gray-600">&quot;{selectedComplaint.content}&quot;</p></div>
                         <textarea className="w-full border border-gray-300 rounded-lg p-3 text-sm h-32 outline-none focus:ring-2 focus:ring-emerald-500 text-gray-800 bg-white" placeholder="Tulis instruksi atau tanggapan resmi RT/RW..." value={responseMessage} onChange={e => setResponseMessage(e.target.value)}></textarea>
                         <div className="mt-4 flex justify-end gap-2"><button onClick={() => setSelectedComplaint(null)} className="px-4 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Batal</button><button onClick={handleSendResponse} className="px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-2 font-bold"><Send size={14} /> Kirim Tanggapan</button></div>
                     </div>

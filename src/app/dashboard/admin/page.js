@@ -12,15 +12,28 @@ import {
 } from 'lucide-react';
 import { exportToExcel, formatRupiah, uploadAvatar } from '@/utils/enhancedHelpers';
 import Swal from 'sweetalert2';
+import {
+    fetchAdminData,
+    fetchAppSettings,
+    updateAppSettings,
+    updateProfile,
+    upsertDriver,
+    deleteRecord,
+    upsertArea,
+    updateTransaction,
+    updateDriverVerification,
+    supabase
+} from '@/utils/services';
+import useAuth from '@/hooks/useAuth';
+import AdminDashboardOverview from '@/components/admin/AdminDashboardOverview';
+import AdminDriversSection from '@/components/admin/AdminDriversSection';
 
 // --- INISIALISASI SUPABASE ---
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+// Logic moved to services.js
 
 export default function AdminDashboard() {
     const router = useRouter();
+    const { user: authUser, loading: authLoading } = useAuth();
 
     // --- 1. STATE MANAGEMENT ---
     const [mounted, setMounted] = useState(false);
@@ -87,70 +100,61 @@ export default function AdminDashboard() {
         script.async = true;
         document.body.appendChild(script);
 
-        fetchAllData();
-
-        // --- REALTIME SUBSCRIPTION (Admin) ---
-        const channel = supabase
-            .channel('admin-dashboard')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => fetchAllData())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => fetchAllData())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchAllData())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'areas' }, () => fetchAllData())
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => fetchAllData())
-            .subscribe();
-
         return () => {
             clearInterval(timer);
-            document.body.removeChild(script);
-            supabase.removeChannel(channel);
+            if (document.body.contains(script)) {
+                document.body.removeChild(script);
+            }
         };
     }, []);
 
-    const fetchAllData = async () => {
-        setLoading(true);
-        try {
-            // A. User Profile (Admin)
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) { router.push('/login'); return; }
+    useEffect(() => {
+        const initializeDashboard = async () => {
+            if (authLoading) return;
+            setLoading(true);
+            try {
+                if (!authUser) {
+                    router.push('/login');
+                    return;
+                }
 
-            const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            const finalName = profile?.full_name || user.user_metadata?.full_name || 'Administrator';
-            setCurrentUser({ ...user, ...profile, full_name: finalName, newPassword: '' });
+                // A. User Profile (Admin)
+                setCurrentUser({ ...authUser, newPassword: '' });
 
-            // B. App Settings
-            const { data: settingData } = await supabase.from('app_settings').select('*').single();
-            if (settingData) {
-                setSettings({
-                    tariff: settingData.tariff_per_kg,
-                    opStart: settingData.operational_start,
-                    opEnd: settingData.operational_end,
-                    emailNotif: settingData.email_notification
-                });
+                // B. App Settings
+                const settingData = await fetchAppSettings();
+                if (settingData) {
+                    setSettings({
+                        tariff: settingData.tariff_per_kg,
+                        opStart: settingData.operational_start,
+                        opEnd: settingData.operational_end,
+                        emailNotif: settingData.email_notification
+                    });
+                }
+
+                // C. Data Master & Transactions
+                await refreshData();
+            } catch (err) {
+                console.error("Error fetching data:", err);
+            } finally {
+                setLoading(false);
             }
+        };
 
-            // C. Notifications
-            const { data: notifData } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
-            if (notifData) setNotifications(notifData);
+        initializeDashboard();
+    }, [authUser, authLoading]);
 
-            // D. Data Master
-            const { data: userData } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-            if (userData) setUsers(userData);
+    const refreshData = async () => {
+        try {
+            const data = await fetchAdminData();
+            setUsers(data.users);
+            setDrivers(data.drivers);
+            setAreas(data.areas);
+            setTransactions(data.transactions);
+            setNotifications(data.notifications || []); // Assuming notifications might be added to fetchAdminData if needed
 
-            const { data: driverData } = await supabase.from('drivers').select('*').order('created_at', { ascending: false });
-            if (driverData) setDrivers(driverData);
-
-            const { data: areaData } = await supabase.from('areas').select('*, drivers(name)').order('created_at', { ascending: false });
-            if (areaData) setAreas(areaData);
-
-            const { data: trxData, error: trxError } = await supabase.from('transactions')
-                .select('*, profiles!profile_id(full_name, address), waste_types!waste_type_id(name)')
-                .order('created_at', { ascending: false });
-
-            if (trxError) console.error("Error fetching transactions:", trxError);
-
-            if (trxData) {
-                setTransactions(trxData);
-                const mappedPickups = trxData.map(item => ({
+            if (data.transactions) {
+                const mappedPickups = data.transactions.map(item => ({
                     id: item.id,
                     date: new Date(item.created_at).toLocaleDateString('id-ID'),
                     user: item.profiles?.full_name || 'Tanpa Nama',
@@ -159,34 +163,23 @@ export default function AdminDashboard() {
                     weight: item.weight,
                     weightLabel: `${item.weight} kg`,
                     status: item.status,
-                    driver: item.driver_name || '-',
+                    driver: item.drivers?.name || item.driver_name || '-',
                     price: item.total_price
                 }));
                 setPickups(mappedPickups);
 
-                // Hitung Keuangan (Hanya dari yang sudah 'Done')
-                const totalIncome = trxData
-                    .filter(t => t.status === 'Done')
-                    .reduce((acc, curr) => acc + (Number(curr.total_price) || 0), 0);
-
-                // Hitung Komisi Driver (15%)
-                const totalDriverCommission = trxData
-                    .filter(t => t.status === 'Done')
-                    .reduce((acc, curr) => acc + (Number(curr.total_price) || 0) * 0.15, 0);
-
-                setFinanceStats({ income: totalIncome, expense: totalIncome * 0.3, driverCommission: totalDriverCommission });
+                // Hitung Keuangan
+                const totalIncome = data.transactions.reduce((acc, curr) => acc + (curr.total_price || 0), 0);
+                setFinanceStats({ income: totalIncome, expense: totalIncome * 0.3 });
             }
-
         } catch (err) {
-            console.error("Error fetching data:", err);
-        } finally {
-            setLoading(false);
+            console.error("Refresh failed:", err);
         }
     };
 
     // --- 4. HANDLERS (CRUD & ACTIONS) ---
 
-    const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
+    const handleLogout = async () => { await logout(); router.push('/login'); };
 
     // --- EXPORT EXCEL HANDLER ---
     const handleExportExcel = async (data) => {
@@ -240,8 +233,8 @@ export default function AdminDashboard() {
                     onSuccess: async function (result) {
                         Swal.fire('Berhasil', 'Pembayaran Berhasil!', 'success');
                         // Update status di Supabase
-                        await supabase.from('transactions').update({ status: 'Done' }).eq('id', pickupItem.id);
-                        fetchAllData();
+                        await updateTransaction(pickupItem.id, { status: 'Done' });
+                        refreshData();
                     },
                     onPending: function (result) { Swal.fire('Pending', 'Menunggu pembayaran!', 'info'); },
                     onError: function (result) { Swal.fire('Gagal', 'Pembayaran gagal!', 'error'); },
@@ -260,45 +253,41 @@ export default function AdminDashboard() {
     const handleSave = async (e) => {
         e.preventDefault();
         try {
-            let error;
             if (modalType === 'driver') {
                 const payload = { name: formData.name, vehicle: formData.vehicle, shift: formData.shift, status: formData.status };
 
                 // Jika EDIT, update berdasarkan ID driver (editingItem.id)
                 // Jika BARU, kita HARUS pakai userId dari dropdown sebagai ID driver agar sinkron dengan auth.users
-                let query;
-                if (editingItem) {
-                    query = supabase.from('drivers').update(payload).eq('id', editingItem.id);
-                } else {
-                    if (!formData.userId) throw new Error("Pilih user terlebih dahulu!");
-                    // Pakai userId sebagai ID di tabel drivers
-                    query = supabase.from('drivers').insert([{ ...payload, id: formData.userId }]);
-                }
+                if (!editingItem && !formData.userId) throw new Error("Pilih user terlebih dahulu!");
 
-                ({ error } = await query);
+                await upsertDriver({ ...payload, id: editingItem ? editingItem.id : formData.userId }, editingItem ? editingItem.id : null);
             }
             else if (modalType === 'area') {
-                const payload = { rw: formData.rw, rt: formData.rt, driver_id: formData.driverId || null };
-                const query = editingItem ? supabase.from('areas').update(payload).eq('id', editingItem.id) : supabase.from('areas').insert([payload]);
-                ({ error } = await query);
+                const payload = { kelurahan: formData.kelurahan, rw: formData.rw, rt: formData.rt, driver_id: formData.driverId || null };
+                await upsertArea(payload, editingItem ? editingItem.id : null);
             }
             else if (modalType === 'user') {
-                ({ error } = await supabase.from('profiles').update({
+                await updateProfile(editingItem.id, {
                     full_name: formData.name,
                     role: formData.role,
                     alamat: formData.region,
                     rt: formData.rt,
                     rw: formData.rw
-                }).eq('id', editingItem.id));
+                });
             }
             else if (modalType === 'pickup') {
-                ({ error } = await supabase.from('transactions').update({ status: formData.status, driver_name: formData.driver }).eq('id', editingItem.id));
+                const selectedDriver = drivers.find(d => d.id === formData.driverId);
+                const updatePayload = {
+                    status: formData.status,
+                    driver_id: formData.driverId || null,
+                    driver_name: selectedDriver ? selectedDriver.name : (formData.driverName || null)
+                };
+                await updateTransaction(editingItem.id, updatePayload);
             }
 
-            if (error) throw error;
             Swal.fire('Sukses', 'Data berhasil disimpan!', 'success');
             setIsModalOpen(false);
-            fetchAllData();
+            refreshData();
         } catch (err) { Swal.fire('Error', "Gagal: " + err.message, 'error'); }
     };
 
@@ -317,10 +306,10 @@ export default function AdminDashboard() {
 
         try {
             const table = type === 'driver' ? 'drivers' : type === 'area' ? 'areas' : type === 'notif' ? 'notifications' : '';
-            if (table) await supabase.from(table).delete().eq('id', id);
+            if (table) await deleteRecord(table, id);
 
             if (type === 'notif') setNotifications(prev => prev.filter(n => n.id !== id));
-            else fetchAllData();
+            else refreshData();
 
             Swal.fire('Terhapus!', 'Data berhasil dihapus.', 'success');
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -328,26 +317,28 @@ export default function AdminDashboard() {
 
     const handleSaveSettings = async () => {
         try {
-            await supabase.from('app_settings').update({
+            await updateAppSettings({
                 tariff_per_kg: settings.tariff,
                 operational_start: settings.opStart,
                 operational_end: settings.opEnd,
                 email_notification: settings.emailNotif
-            }).eq('id', 1);
-            await supabase.from('notifications').insert([{ title: 'Pengaturan Diubah', message: `Tarif baru: Rp ${settings.tariff}`, type: 'info' }]);
+            });
+            // Manual insert notification for now or use a service
+            await addNotification({ title: 'Pengaturan Diubah', message: `Tarif baru: Rp ${settings.tariff}`, type: 'info' });
             Swal.fire('Sukses', 'Pengaturan sistem berhasil disimpan!', 'success');
-            fetchAllData();
+            refreshData();
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
     };
 
     const handleUpdateProfile = async (e) => {
         e.preventDefault();
         try {
-            await supabase.from('profiles').update({ full_name: currentUser.full_name, alamat: currentUser.alamat }).eq('id', currentUser.id);
+            await updateProfile(currentUser.id, { full_name: currentUser.full_name, alamat: currentUser.alamat });
             if (currentUser.newPassword?.length >= 6) {
                 await supabase.auth.updateUser({ password: currentUser.newPassword });
             }
             Swal.fire('Sukses', 'Profil Admin berhasil diperbarui!', 'success');
+            refreshData();
         } catch (err) { Swal.fire('Error', err.message, 'error'); }
     };
 
@@ -367,8 +358,7 @@ export default function AdminDashboard() {
             if (!publicUrl) throw new Error('Gagal mendapatkan URL gambar.');
 
             // Update profile in DB
-            const { error } = await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id);
-            if (error) throw error;
+            await updateProfile(currentUser.id, { avatar_url: publicUrl });
 
             setCurrentUser(prev => ({ ...prev, avatar_url: publicUrl }));
             Swal.fire('Sukses', 'Foto profil berhasil diperbarui!', 'success');
@@ -379,19 +369,15 @@ export default function AdminDashboard() {
     };
 
     const handleMarkRead = async (id) => {
-        await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+        await markNotificationRead(id);
         setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
     };
 
     const handleVerifyDriver = async (driverId, newStatus) => {
         try {
-            const { error } = await supabase.from('drivers').update({ verification_status: newStatus }).eq('id', driverId);
-            if (error) throw error;
-
+            await updateDriverVerification(driverId, newStatus);
             setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, verification_status: newStatus } : d));
             Swal.fire('Sukses', `Status driver berhasil diubah menjadi ${newStatus}`, 'success');
-
-            // Kirim notifikasi ke driver (bisa via tabel notif, disini simulasi alert sukses saja)
         } catch (err) {
             Swal.fire('Error', 'Gagal update status verifikasi: ' + err.message, 'error');
         }
@@ -408,6 +394,7 @@ export default function AdminDashboard() {
         if (item) {
             if (type === 'area') setFormData({ ...item, driverId: item.driver_id });
             else if (type === 'user') setFormData({ name: item.full_name, role: item.role, region: item.alamat, ...item });
+            else if (type === 'pickup') setFormData({ status: item.status, driverId: item.driver_id || '', driverName: item.driver, weightLabel: item.weightLabel, user: item.user });
             else setFormData({ ...item });
         } else {
             if (type === 'driver') setFormData({ status: 'Off Duty', shift: 'Shift 1 (08:00 - 12:00)' });
@@ -418,128 +405,16 @@ export default function AdminDashboard() {
     // --- 5. RENDERERS (UI COMPONENTS) ---
 
     const renderDashboard = () => (
-        <div className="space-y-6 animate-in fade-in text-gray-800">
-            <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl shadow-lg p-8 text-white relative overflow-hidden">
-                <div className="relative z-10">
-                    <h2 className="text-3xl font-bold mb-2">Dashboard Admin 👋</h2>
-                    <p>Ringkasan aktivitas sistem RecycleYuk hari ini.</p>
-                </div>
-                {/* Visual hiasan */}
-                <div className="absolute right-0 top-0 h-full w-1/3 bg-white/10 skew-x-12"></div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {[
-                    { l: 'Total User', v: users.length, i: Users, c: 'blue' },
-                    { l: 'Pickup Aktif', v: pickups.filter(p => p.status !== 'Done').length, i: Truck, c: 'green' },
-                    { l: 'Laporan Baru', v: notifications.filter(n => !n.is_read).length, i: Bell, c: 'red' },
-                    { l: 'Pendapatan', v: formatRupiah(financeStats.income), i: Wallet, c: 'purple' }
-                ].map((s, i) => (
-                    <div key={i} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center hover:shadow-md transition">
-                        <div><p className="text-gray-500 text-sm font-medium">{s.l}</p><h3 className="text-2xl font-bold text-gray-800">{s.v}</h3></div>
-                        <div className={`bg-${s.c}-50 p-3 rounded-lg text-${s.c}-600`}><s.i size={28} /></div>
-                    </div>
-                ))}
-            </div>
-
-            {/* --- RECENT ACTIVITY & QUICK ACTIONS --- */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Recent Activities */}
-                <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                        <h3 className="font-bold text-gray-800 flex items-center gap-2"><Clock size={18} className="text-blue-500" /> Aktivitas Terbaru</h3>
-                        <button onClick={() => setActivePage('reports')} className="text-sm text-blue-600 hover:underline">Lihat Semua</button>
-                    </div>
-                    <div className="divide-y divide-gray-100">
-                        {transactions.slice(0, 5).map((trx) => (
-                            <div key={trx.id} className="p-4 hover:bg-gray-50 transition flex items-center gap-4">
-                                <div className={`p-2 rounded-full ${trx.status === 'Done' ? 'bg-green-100 text-green-600' :
-                                    trx.status === 'Process' ? 'bg-blue-100 text-blue-600' :
-                                        'bg-yellow-100 text-yellow-600'
-                                    }`}>
-                                    {trx.status === 'Done' ? <CheckCircle2 size={18} /> :
-                                        trx.status === 'Process' ? <Truck size={18} /> :
-                                            <Clock size={18} />}
-                                </div>
-                                <div className="flex-1">
-                                    <p className="text-sm font-bold text-gray-800">
-                                        {trx.status === 'Pending' ? 'Permintaan Pickup Baru' :
-                                            trx.status === 'Process' ? 'Sedang Dijemput' : 'Pickup Selesai'}
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                        {trx.profiles?.full_name} • {trx.waste_types?.name} ({trx.weight} kg)
-                                    </p>
-                                </div>
-                                <div className="text-right">
-                                    <span className="text-xs font-medium text-gray-400">
-                                        {new Date(trx.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                                    </span>
-                                </div>
-                            </div>
-                        ))}
-                        {transactions.length === 0 && (
-                            <div className="p-8 text-center text-gray-400">Belum ada aktivitas</div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Quick Actions */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><PlayCircle size={18} className="text-green-500" /> Quick Actions</h3>
-                    <div className="space-y-3">
-                        <button onClick={() => openModal('driver')} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-green-50 hover:text-green-700 rounded-xl transition border border-gray-100">
-                            <div className="bg-green-100 p-2 rounded-lg text-green-700"><Truck size={18} /></div>
-                            <span className="font-medium text-sm">Tambah Driver Baru</span>
-                        </button>
-                        <button onClick={() => openModal('area')} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-blue-50 hover:text-blue-700 rounded-xl transition border border-gray-100">
-                            <div className="bg-blue-100 p-2 rounded-lg text-blue-700"><MapPin size={18} /></div>
-                            <span className="font-medium text-sm">Tambah Wilayah</span>
-                        </button>
-                        <button onClick={() => setActivePage('pickups')} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-orange-50 hover:text-orange-700 rounded-xl transition border border-gray-100">
-                            <div className="bg-orange-100 p-2 rounded-lg text-orange-700"><Trash2 size={18} /></div>
-                            <span className="font-medium text-sm">Kelola Pickup</span>
-                        </button>
-                        <button onClick={() => setActivePage('settings')} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-purple-50 hover:text-purple-700 rounded-xl transition border border-gray-100">
-                            <div className="bg-purple-100 p-2 rounded-lg text-purple-700"><Settings size={18} /></div>
-                            <span className="font-medium text-sm">Pengaturan Tarif</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2"><FileText size={20} /> Aktivitas Terbaru</h3>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-gray-50 text-gray-500"><tr><th className="p-3">User</th><th className="p-3">Berat</th><th className="p-3">Status</th></tr></thead>
-                            <tbody>
-                                {pickups.slice(0, 5).map(p => (
-                                    <tr key={p.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-3 font-medium text-gray-800">{p.user}</td>
-                                        <td className="p-3 text-gray-600">{p.weightLabel}</td>
-                                        <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'Done' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{p.status}</span></td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2"><MapPin size={20} /> Status Driver</h3>
-                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
-                        {drivers.map(d => (
-                            <div key={d.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center font-bold text-gray-500">{d.name.charAt(0)}</div>
-                                    <div><span className="font-bold text-gray-800">{d.name}</span><br /><span className="text-xs text-gray-500">{d.vehicle}</span></div>
-                                </div>
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${d.status === 'On Duty' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>{d.status}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        </div>
+        <AdminDashboardOverview
+            users={users}
+            pickups={pickups}
+            notifications={notifications}
+            financeStats={financeStats}
+            transactions={transactions}
+            drivers={drivers}
+            onOpenModal={openModal}
+            onNavigate={setActivePage}
+        />
     );
 
     const renderUsers = () => (
@@ -587,62 +462,12 @@ export default function AdminDashboard() {
     );
 
     const renderDrivers = () => (
-        <div className="space-y-6 animate-in slide-in-from-right">
-            <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-                <h3 className="font-bold text-lg text-gray-800">List Driver</h3>
-                <button onClick={() => openModal('driver')} className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex gap-2 hover:bg-green-700"><Plus size={18} /> Tambah Driver</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {drivers.map(d => (
-                    <div key={d.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 relative group hover:shadow-md transition">
-                        <div className="absolute top-4 right-4 flex gap-1 opacity-100 transition-opacity">
-                            <button onClick={() => openModal('driver', d)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"><Edit size={16} /></button>
-                            <button onClick={() => handleDelete(d.id, 'driver')} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"><Trash2 size={16} /></button>
-                        </div>
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center text-xl font-bold text-gray-500">{d.name.charAt(0)}</div>
-                            <div>
-                                <h4 className="font-bold text-lg text-gray-800">{d.name}</h4>
-                                <p className="text-sm text-gray-500">{d.vehicle}</p>
-                                <div className={`text-xs px-2 py-0.5 rounded-full w-fit mt-1 font-bold ${d.verification_status === 'verified' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                    {d.verification_status === 'verified' ? 'Terverifikasi' : (d.verification_status === 'rejected' ? 'Ditolak' : 'Menunggu Verifikasi')}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Action Buttons for Verification */}
-                        {d.verification_status !== 'verified' && (
-                            <div className="flex gap-2 mb-4">
-                                <button onClick={() => handleVerifyDriver(d.id, 'verified')} className="flex-1 bg-green-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-green-700">Verifikasi</button>
-                                {d.verification_status !== 'rejected' && (
-                                    <button onClick={() => handleVerifyDriver(d.id, 'rejected')} className="flex-1 bg-red-50 text-red-600 border border-red-200 py-2 rounded-lg text-xs font-bold hover:bg-red-100">Tolak</button>
-                                )}
-                            </div>
-                        )}
-
-                        <div className="flex justify-between items-center text-sm border-t pt-3 mb-3 border-gray-100">
-                            <div>
-                                <p className="text-[10px] text-gray-400 font-bold uppercase">Total Komisi</p>
-                                <p className="font-bold text-green-600">
-                                    {formatRupiah(transactions
-                                        .filter(t => t.driver_id === d.id && t.status === 'Done')
-                                        .reduce((acc, curr) => acc + (Number(curr.total_price) || 0) * 0.15, 0))}
-                                </p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-[10px] text-gray-400 font-bold uppercase">Total Trip</p>
-                                <p className="font-bold text-gray-700">{transactions.filter(t => t.driver_id === d.id && t.status === 'Done').length} Selesai</p>
-                            </div>
-                        </div>
-
-                        <div className="flex justify-between items-center text-sm border-t pt-3 border-gray-100">
-                            <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-medium">{d.shift}</span>
-                            <span className={`px-3 py-1 rounded-full font-bold ${d.status === 'On Duty' ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-600'}`}>{d.status}</span>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
+        <AdminDriversSection
+            drivers={drivers}
+            onOpenModal={openModal}
+            onDelete={handleDelete}
+            onVerifyDriver={handleVerifyDriver}
+        />
     );
 
     const renderAreas = () => (
@@ -658,7 +483,7 @@ export default function AdminDashboard() {
                             <button onClick={() => openModal('area', a)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Edit size={16} /></button>
                             <button onClick={() => handleDelete(a.id, 'area')} className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
                         </div>
-                        <h4 className="font-bold text-xl mb-1 text-gray-800">Wilayah Operasional</h4>
+                        <h4 className="font-bold text-xl mb-1 text-gray-800">{a.kelurahan}</h4>
                         <div className="flex gap-2 text-sm text-gray-600 mb-4">
                             <span className="bg-gray-100 px-2 py-1 rounded">RW: {a.rw}</span>
                             <span className="bg-gray-100 px-2 py-1 rounded">RT: {a.rt}</span>
@@ -760,21 +585,16 @@ export default function AdminDashboard() {
 
     const renderFinance = () => (
         <div className="space-y-6 animate-in slide-in-from-right">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-green-50 p-6 rounded-xl border border-green-200 shadow-sm">
                     <p className="text-green-800 font-medium mb-1">Total Pemasukan</p>
                     <h3 className="text-3xl font-bold text-green-900">{formatRupiah(financeStats.income)}</h3>
                     <p className="text-xs text-green-600 mt-2 flex items-center gap-1"><CheckCircle size={12} /> Dari transaksi selesai</p>
                 </div>
-                <div className="bg-blue-50 p-6 rounded-xl border border-blue-200 shadow-sm">
-                    <p className="text-blue-800 font-medium mb-1">Total Komisi Driver</p>
-                    <h3 className="text-3xl font-bold text-blue-900">{formatRupiah(financeStats.driverCommission || 0)}</h3>
-                    <p className="text-xs text-blue-600 mt-2 flex items-center gap-1"><Truck size={12} /> Berdasarkan 15% transaksi</p>
-                </div>
                 <div className="bg-red-50 p-6 rounded-xl border border-red-200 shadow-sm">
-                    <p className="text-red-800 font-medium mb-1">Operasional & Profit</p>
+                    <p className="text-red-800 font-medium mb-1">Estimasi Pengeluaran (30%)</p>
                     <h3 className="text-3xl font-bold text-red-900">{formatRupiah(financeStats.expense)}</h3>
-                    <p className="text-xs text-red-600 mt-2 flex items-center gap-1"><AlertCircle size={12} /> Biaya sistem & admin</p>
+                    <p className="text-xs text-red-600 mt-2 flex items-center gap-1"><AlertCircle size={12} /> Biaya operasional & gaji</p>
                 </div>
             </div>
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -1016,9 +836,9 @@ export default function AdminDashboard() {
                                 <select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.status || 'Off Duty'} onChange={e => setFormData({ ...formData, status: e.target.value })}><option value="On Duty">On Duty</option><option value="Off Duty">Off Duty</option></select>
                             </>}
 
-                            {modalType === 'area' && <><div className="grid grid-cols-2 gap-4"><input className="border p-2 rounded bg-white text-gray-800" placeholder="RW" value={formData.rw || ''} onChange={e => setFormData({ ...formData, rw: e.target.value })} /><input className="border p-2 rounded bg-white text-gray-800" placeholder="RT" value={formData.rt || ''} onChange={e => setFormData({ ...formData, rt: e.target.value })} /></div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driverId || ''} onChange={e => setFormData({ ...formData, driverId: e.target.value })}><option value="">Pilih Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
+                            {modalType === 'area' && <><input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Kelurahan" value={formData.kelurahan || ''} onChange={e => setFormData({ ...formData, kelurahan: e.target.value })} required /><div className="grid grid-cols-2 gap-4"><input className="border p-2 rounded bg-white text-gray-800" placeholder="RW" value={formData.rw || ''} onChange={e => setFormData({ ...formData, rw: e.target.value })} /><input className="border p-2 rounded bg-white text-gray-800" placeholder="RT" value={formData.rt || ''} onChange={e => setFormData({ ...formData, rt: e.target.value })} /></div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driverId || ''} onChange={e => setFormData({ ...formData, driverId: e.target.value })}><option value="">Pilih Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
 
-                            {modalType === 'pickup' && <><div className="bg-gray-100 p-3 rounded text-sm text-gray-800 font-medium">User: {formData.user} ({formData.weightLabel})</div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.status || 'Pending'} onChange={e => setFormData({ ...formData, status: e.target.value })}><option value="Pending">Pending</option><option value="In Progress">Proses</option><option value="Done">Selesai</option><option value="Canceled">Dibatalkan</option></select><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driver || ''} onChange={e => setFormData({ ...formData, driver: e.target.value })}><option value="">Assign Driver</option>{drivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}</select></>}
+                            {modalType === 'pickup' && <><div className="bg-gray-100 p-3 rounded text-sm text-gray-800 font-medium">User: {formData.user} ({formData.weightLabel})</div><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.status || 'Pending'} onChange={e => setFormData({ ...formData, status: e.target.value })}><option value="Pending">Pending</option><option value="In Progress">Proses</option><option value="Done">Selesai</option><option value="Canceled">Dibatalkan</option></select><select className="w-full border p-2 rounded bg-white text-gray-800" value={formData.driverId || ''} onChange={e => setFormData({ ...formData, driverId: e.target.value })}><option value="">Assign Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
 
                             {modalType === 'user' && <>
                                 <input className="w-full border p-2 rounded bg-white text-gray-800" placeholder="Nama" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} />

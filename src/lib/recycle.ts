@@ -1,5 +1,5 @@
 // src/lib/recycle.ts
-/* eslint-disable */
+
 import * as _m0 from "protobufjs/minimal";
 
 export const protobufPackage = "recycle";
@@ -311,4 +311,5 @@ export const WasteTypeList = {
     }
     return message;
   },
+
 };

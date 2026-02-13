@@ -24,7 +24,8 @@ export default function RegisterPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    platNomor: '' // Tambahan state plat nomor
+    platNomor: '', // Tambahan state plat nomor
+    kelurahan: '' // Tambahan state kelurahan
   });
 
   const [role, setRole] = useState('user'); // Default role: Warga
@@ -82,6 +83,7 @@ export default function RegisterPage() {
             role: role,        // Simpan Role
             rt: formData.rt,   // Simpan RT
             rw: formData.rw,   // Simpan RW
+            kelurahan: formData.kelurahan, // Simpan Kelurahan
             updated_at: new Date().toISOString()
           },
             { onConflict: 'id' }
@@ -177,6 +179,11 @@ export default function RegisterPage() {
               <div className="relative group">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Alamat Lengkap</label>
                 <div className="relative"><MapPin className="absolute left-3 top-4 text-gray-400" size={20} /><textarea name="alamat" value={formData.alamat} onChange={handleChange} rows="2" className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none resize-none text-gray-800" placeholder="Jalan, No Rumah" required></textarea></div>
+              </div>
+
+              <div className="relative group">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kelurahan</label>
+                <div className="relative"><MapPin className="absolute left-3 top-3 text-gray-400" size={20} /><input type="text" name="kelurahan" value={formData.kelurahan} onChange={handleChange} className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-800" placeholder="Nama Kelurahan" required /></div>
               </div>
 
               {/* INPUT RT & RW (Muncul untuk User, RT, dan Driver) */}

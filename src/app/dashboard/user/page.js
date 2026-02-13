@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
 import {
     Trash2, Calendar, Award, Truck, MapPin, User, FileText,
     Bell, BookOpen, Clock, X, LogOut, ChevronLeft, ChevronRight, HelpCircle,
@@ -12,8 +11,15 @@ import {
     Navigation, Trophy, Recycle // Icon Navigasi GPS + Trophy + Recycle
 } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { getRewardBadge, formatRupiah, calculateRewardPoints, uploadAvatar } from '@/utils/enhancedHelpers';
+import { getRewardBadge, formatRupiah, calculateRewardPoints, uploadAvatar, getStatusColor } from '@/utils/enhancedHelpers';
 import ChatModal from '@/components/shared/ChatModal';
+import {
+    createTransaction,
+    subscribeToDriverLocation,
+    supabase
+} from '@/utils/services';
+import useAuth from '@/hooks/useAuth';
+import useUserTransactions from '@/hooks/useUserTransactions';
 
 // --- OPENLAYERS IMPORTS ---
 import 'ol/ol.css';
@@ -29,17 +35,17 @@ import LineString from 'ol/geom/LineString';
 import { fromLonLat } from 'ol/proj';
 import { Icon, Style, Stroke, Circle as CircleStyle, Fill } from 'ol/style';
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+// Logic moved to services.js
 
 // Koordinat Default [Lon, Lat]
 const DEFAULT_COORDS = [107.6191, -6.9175];
 const DRIVER_START = [107.6250, -6.9250];
 
 const WEIGHT_OPTIONS = [
-    { label: 'Ringan (0-2.5KG)', value: 2.5 },
-    { label: 'Sedang (2.5-5KG)', value: 5 },
-    { label: 'Berat (5-10KG)', value: 10 },
-    { label: 'Sangat Berat (>10KG)', value: 15 }
+    { label: 'Ringan (0 - 5 KG)', value: 5 },
+    { label: 'Sedang (5 - 10 KG)', value: 10 },
+    { label: 'Berat (10 - 20 KG)', value: 20 },
+    { label: 'Sangat Berat (> 20 KG)', value: 30 }
 ];
 
 const TIME_OPTIONS = [
@@ -51,6 +57,7 @@ const COMPLAINT_CATEGORIES = ['Sampah Menumpuk', 'Jadwal Terlewat', 'Fasilitas R
 
 export default function UserDashboard() {
     const router = useRouter();
+    const { user: authUser, loading: authLoading } = useAuth();
 
     // --- STATE MANAGEMENT ---
     const [loading, setLoading] = useState(true);
@@ -74,18 +81,11 @@ export default function UserDashboard() {
     const [driverLocation, setDriverLocation] = useState(DRIVER_START);
     const [complaints, setComplaints] = useState([]);
     const [notifications, setNotifications] = useState([]);
-    const [rtrwHead, setRtrwHead] = useState(null); // New state for RT/RW Head info
     const [isChatOpen, setIsChatOpen] = useState(false);
 
     // Forms
     const [complaintForm, setComplaintForm] = useState({ title: '', category: '', content: '' });
-    const [formRequest, setFormRequest] = useState({
-        wasteTypeId: '',
-        weight: 2.5,
-        date: new Date().toISOString().split('T')[0],
-        time: '09:00',
-        notes: ''
-    });
+    const [formRequest, setFormRequest] = useState({ wasteTypeId: '', weight: 5, date: '', time: '09:00', notes: '' });
 
     // Payment & Modals
     const [paymentModal, setPaymentModal] = useState({ open: false, bill: null, step: 'method' });
@@ -100,6 +100,12 @@ export default function UserDashboard() {
     const mapElement = useRef();
     const mapRef = useRef(null);
     const vectorSourceRef = useRef(new VectorSource());
+
+    // --- DATA HOOKS ---
+    const {
+        data: transactions,
+        refetch: refetchTransactions
+    } = useUserTransactions(profile?.id);
 
     const SIDEBAR_MENUS = [
         { id: 'dashboard', label: 'Dashboard', icon: Award },
@@ -134,19 +140,41 @@ export default function UserDashboard() {
     }, []);
 
     // --- 2. LOGIC & EFFECTS ---
+    const startGpsTracking = () => {
+        if (!navigator.geolocation) return;
+
+        navigator.geolocation.watchPosition(
+            (position) => {
+                const { latitude, longitude } = position.coords;
+                setUserLocation([longitude, latitude]);
+                setIsGpsActive(true);
+            },
+            (err) => console.warn("GPS Error:", err.message),
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+        );
+    };
+
+    const centerToUserLocation = () => {
+        if (mapRef.current && isGpsActive) {
+            mapRef.current.getView().animate({ center: fromLonLat(userLocation), zoom: 17, duration: 1000 });
+        } else {
+            Swal.fire('GPS Mencari...', 'Pastikan izin lokasi aktif dan tunggu sinyal.', 'info');
+        }
+    };
+
+    // --- 2. LOGIC & EFFECTS ---
     useEffect(() => {
         const timer = setInterval(() => {
             setCurrentTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
         }, 1000);
 
-        fetchData();
         startGpsTracking();
 
-        // Realtime Listener
+        // Realtime Listener for Transactions
         const channel = supabase
             .channel('user-dashboard-realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload) => {
-                fetchData();
+                refetchTransactions(); // Only refresh transactions
                 if (payload.eventType === 'UPDATE' && payload.new.status === 'Process') {
                     Swal.fire({
                         title: 'Pengangkutan Aktif!',
@@ -174,292 +202,109 @@ export default function UserDashboard() {
         };
     }, []);
 
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => { setMounted(true) }, []);
+    // --- DATA FETCHING (REFACTORED) ---
+    useEffect(() => {
+        const initializeDashboard = async () => {
+            if (authLoading) return;
+            try {
+                setLoading(true);
+                if (!authUser) { router.push('/login'); return; }
 
-    // --- 3. GPS LOGIC (WATCH POSITION) ---
-    const startGpsTracking = () => {
-        if (!navigator.geolocation) {
-            console.warn("Geolocation is not supported by this browser.");
+                const userProfile = authUser;
+                setProfile(userProfile);
+
+                // Fetch Waste Types (Static)
+                const { data: wastes } = await supabase.from('waste_types').select('*');
+                if (wastes) setWasteTypes(wastes);
+
+                // Fetch Notifications
+                if (userProfile.rt) {
+                    const { data: notifData } = await supabase.from('notifications')
+                        .select('*').or(`rt.eq.${userProfile.rt},rt.is.null`).order('created_at', { ascending: false });
+                    setNotifications(notifData || []);
+                }
+
+                // Fetch Complaints
+                const { data: complaintsData } = await supabase.from('complaints').select('*').eq('user_id', userProfile.id).order('created_at', { ascending: false });
+                setComplaints(complaintsData || []);
+            } catch (error) {
+                console.error("Init Error:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        initializeDashboard();
+    }, [authUser, authLoading]);
+
+    // --- SYNC TRANSACTIONS TO UI STATE ---
+    useEffect(() => {
+        if (!transactions || transactions.length === 0) {
+            setPickupHistory([]);
+            setStats({ totalWaste: 0, lastPickup: '-', points: 0 });
+            setActivePickup(null);
             return;
         }
 
-        navigator.geolocation.watchPosition(
-            (position) => {
-                const { latitude, longitude } = position.coords;
-                const newLoc = [longitude, latitude];
-                setUserLocation(newLoc);
-                setIsGpsActive(true);
-            },
-            (error) => {
-                // Handle GPS errors gracefully - don't show in console for common permission issues
-                if (error.code === 1) {
-                    console.warn("GPS permission denied by user");
-                } else if (error.code === 2) {
-                    console.warn("GPS position unavailable");
-                } else if (error.code === 3) {
-                    console.warn("GPS timeout");
-                }
-                // Keep default coordinates when GPS fails
-            },
-            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
-        );
-    };
+        // Map for History (UI)
+        setPickupHistory(transactions.map(t => ({
+            id: `#REQ-${String(t.id).slice(0, 6)}`,
+            type: t.waste_types?.name,
+            weight: t.weight,
+            date: new Date(t.created_at).toLocaleDateString('id-ID'),
+            time: new Date(t.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+            status: t.status, fee: t.total_price || 0
+        })));
 
-    const centerToUserLocation = () => {
-        if (mapRef.current && isGpsActive) {
-            mapRef.current.getView().animate({ center: fromLonLat(userLocation), zoom: 17, duration: 1000 });
+        // Stats
+        const totalW = transactions.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
+        setStats({
+            totalWaste: totalW,
+            lastPickup: transactions[0] ? new Date(transactions[0].created_at).toLocaleDateString('id-ID') : '-',
+            points: Math.floor(totalW * 10)
+        });
+
+        // Active Pickup Logic
+        const active = transactions.find(t => ['Pending', 'Process', 'In Progress'].includes(t.status));
+        if (active) {
+            const joinedName = Array.isArray(active.drivers) ? active.drivers[0]?.name : active.drivers?.name;
+            const driverName = joinedName || active.driver_name || 'Mencari Driver...';
+
+            setActivePickup({
+                id: active.id,
+                driverId: active.driver_id,
+                status: (active.status === 'Process' || active.status === 'In Progress') ? 'Pengangkutan Aktif' : 'Menunggu Konfirmasi',
+                rawStatus: active.status,
+                driver: driverName,
+                vehicle: active.drivers?.vehicle || 'Pickup Layanan',
+                rating: 4.8,
+                eta: (active.status === 'Process' || active.status === 'In Progress') ? 'Sedang Jalan' : 'Menunggu'
+            });
         } else {
-            Swal.fire('GPS Mencari...', 'Pastikan izin lokasi aktif.', 'info');
+            setActivePickup(null);
         }
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [transactions]);
 
-    // Simulasi Pergerakan Driver
-    // Simulasi Pergerakan Driver & Heading
-    const [driverHeading, setDriverHeading] = useState(0);
-
+    // --- REALTIME DRIVER TRACKING (REFACTORED) ---
     useEffect(() => {
-        if (activePage === 'tracking' && activePickup && activePickup.rawStatus === 'Process') {
-            const interval = setInterval(() => {
-                setDriverLocation(prev => {
-                    const lonDiff = (userLocation[0] - prev[0]) * 0.05;
-                    const latDiff = (userLocation[1] - prev[1]) * 0.05;
-
-                    // Jika dekat, stop
-                    if (Math.abs(lonDiff) < 0.00001 && Math.abs(latDiff) < 0.00001) return prev;
-
-                    // Calculate Bearing (Angle)
-                    // Math.atan2(y, x). We want 0 at North? OpenLayers rotation 0 is UP? No, usually 0 is UP for Icons if image is facing UP.
-                    // If image faces UP (North), standard math angle (0 at East) needs correction.
-                    // Let's assume positive Y is North.
-                    // Bearing = Math.atan2(dx, dy) -> returns angle from Y axis (North) in radians? No.
-                    // Let's use standard Math.atan2(dy, dx) which is angle from X (East).
-                    // And correct for OpenLayers rotation.
-                    // Ideally: calculate rotation needed.
-
-                    // Simple approach: Point towards target.
-                    // Angle from North (Clockwise) is commonly used for headings.
-                    // theta = atan2(dx, dy) (swapped).
-                    const angle = Math.atan2(lonDiff, latDiff); // Angle from North, clockwise?
-                    // Let's test. If dy is pos (North), dx 0 -> atan2(0, 1) = 0. Correct.
-                    // If dx is pos (East), dy 0 -> atan2(1, 0) = PI/2. Correct (90 deg).
-                    setDriverHeading(angle);
-
-                    return [prev[0] + lonDiff, prev[1] + latDiff];
-                });
-            }, 1000);
-            return () => clearInterval(interval);
-        } else {
-            setDriverLocation(DRIVER_START);
-        }
-    }, [activePage, activePickup, userLocation]);
-
-    // --- 4. MAP INITIALIZATION ---
-    useEffect(() => {
-        if (activePage === 'tracking' && mapElement.current && !mapRef.current) {
-
-            const vectorLayer = new VectorLayer({
-                source: vectorSourceRef.current,
-                zIndex: 100
+        let unsubscribe;
+        if (activePage === 'tracking' && activePickup?.driverId && (activePickup?.rawStatus === 'Process' || activePickup?.rawStatus === 'In Progress')) {
+            console.log("Subscribing to driver via Service:", activePickup.driverId);
+            unsubscribe = subscribeToDriverLocation(activePickup.driverId, (loc) => {
+                setDriverLocation([loc.lng, loc.lat]); // Service returns {lat, lng}, User expects [lng, lat]
             });
-
-            const initialMap = new Map({
-                target: mapElement.current,
-                layers: [
-                    new TileLayer({ source: new OSM() }),
-                    vectorLayer
-                ],
-                view: new View({
-                    center: fromLonLat(DEFAULT_COORDS),
-                    zoom: 13
-                }),
-                controls: []
-            });
-
-            mapRef.current = initialMap;
-            updateMapMarkers();
         }
-
-        return () => {
-            if (activePage !== 'tracking' && mapRef.current) {
-                mapRef.current.setTarget(null);
-                mapRef.current = null;
-            }
-        }
-    }, [activePage]);
-
-    // --- 5. UPDATE MARKER & RUTE ---
-    const updateMapMarkers = () => {
-        if (!mapRef.current) return;
-
-        vectorSourceRef.current.clear();
-
-        // A. Marker Rumah User (DIHAPUS dan Diganti Dot Biru Akurasi Saja)
-        if (isGpsActive) {
-            const accuracyFeature = new Feature({ geometry: new Point(fromLonLat(userLocation)) });
-            accuracyFeature.setStyle(new Style({
-                image: new CircleStyle({
-                    radius: 8,
-                    fill: new Fill({ color: '#3b82f6' }),
-                    stroke: new Stroke({ color: '#fff', width: 2 })
-                })
-            }));
-            vectorSourceRef.current.addFeature(accuracyFeature);
-        }
-
-        // Home Icon removed as per request
-
-        // B. Marker Driver
-        if (activePickup?.rawStatus === 'Process') {
-            const driverFeature = new Feature({ geometry: new Point(fromLonLat(driverLocation)) });
-            driverFeature.setStyle(new Style({
-                image: new Icon({
-                    src: '/images/delivery-truck.png', // Custom 3D Green Truck
-                    scale: 0.08,
-                    anchor: [0.5, 0.5]
-                })
-            }));
-            vectorSourceRef.current.addFeature(driverFeature);
-
-            // C. Garis Rute
-            const routeFeature = new Feature({
-                geometry: new LineString([fromLonLat(driverLocation), fromLonLat(userLocation)])
-            });
-            routeFeature.setStyle(new Style({
-                stroke: new Stroke({ color: '#10B981', width: 4, lineDash: [10, 10] })
-            }));
-            vectorSourceRef.current.addFeature(routeFeature);
-        }
-    };
-
-    useEffect(() => {
-        updateMapMarkers();
-    }, [userLocation, driverLocation, activePickup, activePage, driverHeading]);
-
-
-    // --- DATA FETCHING ---
-    const fetchData = async () => {
-        try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) { router.push('/login'); return; }
-
-            const { data: profileData } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-            setProfile(profileData);
-
-            const { data: wastes } = await supabase.from('waste_types').select('*');
-            if (wastes) setWasteTypes(wastes);
-
-            if (profileData?.rt) {
-                const { data: notifData } = await supabase.from('notifications')
-                    .select('*').or(`rt.eq.${profileData.rt},rt.is.null`).order('created_at', { ascending: false });
-                setNotifications(notifData || []);
-
-                // Fetch RT/RW Head
-                const { data: headData } = await supabase.from('profiles')
-                    .select('full_name, avatar_url')
-                    .eq('rt', profileData.rt)
-                    .eq('rw', profileData.rw)
-                    .eq('role', 'rt')
-                    .single();
-
-                if (headData) setRtrwHead(headData);
-            }
-
-            const { data: transactions } = await supabase
-                .from('transactions')
-                .select(`
-                    *,
-                    waste_types:waste_types!waste_type_id(name, price_per_kg)
-                `)
-                .eq('profile_id', user.id)
-                .order('created_at', { ascending: false });
-
-            if (transactions) {
-                setPickupHistory(transactions.map(t => ({
-                    id: `#REQ-${String(t.id).slice(0, 6)}`,
-                    type: t.waste_types?.name,
-                    weight: t.weight,
-                    date: new Date(t.created_at).toLocaleDateString('id-ID'),
-                    time: new Date(t.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-                    status: t.status, fee: t.total_price || 0
-                })));
-
-                const totalW = transactions.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
-                setStats({ totalWaste: totalW, lastPickup: transactions[0] ? new Date(transactions[0].created_at).toLocaleDateString('id-ID') : '-', points: Math.floor(totalW * 10) });
-
-                // Restore definition of active
-                const active = transactions.find(t => t.status === 'Pending' || t.status === 'Process');
-
-                if (active) {
-                    const isPending = active.status === 'Pending';
-                    let driverName = 'Driver';
-                    let vehicleInfo = 'Pickup Layanan';
-
-                    // Jika status Process, ambil data driver dari tabel drivers
-                    if (!isPending && active.driver_id) {
-                        const { data: driverData } = await supabase
-                            .from('drivers')
-                            .select('name, vehicle, plat_nomor')
-                            .eq('id', active.driver_id)
-                            .single();
-
-                        if (driverData) {
-                            driverName = driverData.name || 'Driver';
-                            const v = driverData.vehicle;
-                            const p = driverData.plat_nomor;
-                            if (v && p) vehicleInfo = `${v} - ${p}`;
-                            else if (v) vehicleInfo = v;
-                        }
-                    }
-
-                    setActivePickup({
-                        id: active.id,
-                        driverId: active.driver_id,
-                        status: isPending ? 'Menunggu Konfirmasi' : 'Pengangkutan Aktif',
-                        rawStatus: active.status,
-                        driver: isPending ? 'Sedang Mencari Driver...' : driverName,
-                        vehicle: isPending ? '-' : vehicleInfo,
-                        rating: 4.8,
-                        eta: isPending ? 'Menunggu' : 'Sedang Jalan'
-                    });
-                } else { setActivePickup(null); }
-            }
-
-            const { data: complaintsData } = await supabase.from('complaints').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-            setComplaints(complaintsData || []);
-
-        } catch (error) { console.error("Error data:", error); } finally { setLoading(false); }
-    };
-
-    // --- REALTIME DRIVER TRACKING ---
-    useEffect(() => {
-        let channel;
-
-        if (activePage === 'tracking' && activePickup?.driverId && activePickup?.rawStatus === 'Process') {
-            console.log("Subscribing to driver location:", activePickup.driverId);
-
-            // Subscribe ke tabel drivers untuk update lokasi
-            channel = supabase
-                .channel(`driver-tracking-${activePickup.driverId}`)
-                .on('postgres_changes', {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'drivers',
-                    filter: `id=eq.${activePickup.driverId}`
-                }, (payload) => {
-                    const { current_latitude, current_longitude } = payload.new;
-                    if (current_latitude && current_longitude) {
-                        setDriverLocation([current_longitude, current_latitude]);
-                    }
-                })
-                .subscribe();
-        }
-
-        return () => {
-            if (channel) supabase.removeChannel(channel);
-        };
+        return () => { if (unsubscribe) unsubscribe(); };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activePage, activePickup]);
 
+    /* 
+    // OLD SIMULATION REMOVED
+    // Simulasi Pergerakan Driver & Heading
+    // const [driverHeading, setDriverHeading] = useState(0);
+    // useEffect(() => { ... }) 
+    */
     const navigateTo = (pageId) => { setActivePage(pageId); setIsMobileMenuOpen(false); };
 
     const handleLogout = async () => {
@@ -471,7 +316,7 @@ export default function UserDashboard() {
         e.preventDefault();
         const formData = new FormData(e.target);
         const updatedData = { full_name: formData.get('fullName'), email: formData.get('email'), address: formData.get('address'), rt: formData.get('rt'), rw: formData.get('rw') };
-        try { await supabase.from('profiles').update(updatedData).eq('id', profile.id); setProfile({ ...profile, ...updatedData }); setIsEditProfile(false); Swal.fire('Sukses', 'Profil disimpan', 'success'); fetchData(); } catch (e) { }
+        try { await supabase.from('profiles').update(updatedData).eq('id', profile.id); setProfile({ ...profile, ...updatedData }); setIsEditProfile(false); Swal.fire('Sukses', 'Profil disimpan', 'success'); initializeDashboard(); } catch (e) { }
     };
 
     const handleAvatarChange = async (e) => {
@@ -503,43 +348,28 @@ export default function UserDashboard() {
 
     const handleRequestSubmit = async (e) => {
         e.preventDefault();
-        console.log("Submitting Request:", formRequest);
-
-        if (!profile?.id) {
-            Swal.fire('Gagal', 'Profil Anda belum lengkap atau belum dimuat silakan muat ulang halaman.', 'error');
-            return;
-        }
-
-        if (!formRequest.wasteTypeId) { Swal.fire('Gagal', 'Pilih jenis sampah terlebih dahulu', 'error'); return; }
+        if (!formRequest.wasteTypeId) { Swal.fire('Gagal', 'Pilih sampah', 'error'); return; }
 
         try {
             const payload = {
-                profile_id: profile.id,
                 waste_type_id: formRequest.wasteTypeId,
-                weight: parseFloat(formRequest.weight) || 2.5,
-                status: 'Pending',
+                weight: formRequest.weight,
                 pickup_time: formRequest.time,
                 notes: formRequest.notes,
-                // KIRIM KOORDINAT userLocation [Lon, Lat]
-                latitude: userLocation[1],
-                longitude: userLocation[0]
+                latitude: userLocation[1], // Service expects lat
+                longitude: userLocation[0] // Service expects lng
             };
 
-            const { error } = await supabase.from('transactions').insert(payload);
-            if (error) throw error;
+            await createTransaction(profile.id, payload);
+
             Swal.fire('Berhasil', 'Request terkirim', 'success');
-            setFormRequest({
-                wasteTypeId: '',
-                weight: 2.5,
-                date: new Date().toISOString().split('T')[0],
-                time: '09:00',
-                notes: ''
-            });
+            setFormRequest({ wasteTypeId: '', weight: 5, date: '', time: '09:00', notes: '' });
             setActivePage('tracking');
+            refreshTransactions(); // Refresh data
         } catch (err) { Swal.fire('Gagal', err.message, 'error'); }
     };
 
-    const handleComplaintSubmit = async (e) => { e.preventDefault(); try { await supabase.from('complaints').insert({ user_id: profile.id, subject: complaintForm.title, category: complaintForm.category, content: complaintForm.content, status: 'Pending', created_at: new Date() }); Swal.fire('Terkirim', 'Aduan dikirim', 'success'); setComplaintForm({ title: '', category: '', content: '' }); fetchData(); } catch (e) { } };
+    const handleComplaintSubmit = async (e) => { e.preventDefault(); try { await supabase.from('complaints').insert({ user_id: profile.id, subject: complaintForm.title, category: complaintForm.category, content: complaintForm.content, status: 'Pending', created_at: new Date() }); Swal.fire('Terkirim', 'Aduan dikirim', 'success'); setComplaintForm({ title: '', category: '', content: '' }); initializeDashboard(); } catch (e) { } };
 
     const handlePayClick = (b) => setPaymentModal({ open: true, bill: b, step: 'method' });
 
@@ -572,10 +402,17 @@ export default function UserDashboard() {
 
             const data = await response.json();
 
-            if (!response.ok) throw new Error(data.error || "Gagal membuat transaksi");
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || "Gagal membuat transaksi");
+            }
+
+            const snapToken = data.data?.token;
+            if (!snapToken) {
+                throw new Error("Token pembayaran tidak ditemukan");
+            }
 
             // 3. Munculkan Popup Midtrans
-            window.snap.pay(data.token, {
+            window.snap.pay(snapToken, {
                 onSuccess: async function (result) {
                     // Update State Lokal
                     setBills(prev => prev.map(b => b.id === currentBill.id ? { ...b, status: 'Paid' } : b));
@@ -608,7 +445,6 @@ export default function UserDashboard() {
     const markAsRead = (id) => setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
     const deleteNotification = (id) => setNotifications(notifications.filter(n => n.id !== id));
     const unreadCount = notifications.filter(n => !n.read).length;
-    const getStatusColor = (s) => (s === 'Done' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700');
 
     // --- RENDERERS ---
     const rewardBadge = getRewardBadge(stats.points);
@@ -651,33 +487,6 @@ export default function UserDashboard() {
                     <div className="text-center py-8 text-gray-400 border-2 border-dashed rounded-lg bg-gray-50"><Truck size={32} className="mx-auto mb-2 opacity-50" /><p>Belum ada request pickup aktif.</p><button onClick={() => navigateTo('request')} className="mt-2 text-green-600 font-bold hover:underline">Buat Request Baru</button></div>
                 )}
             </div>
-
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-                <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Building size={20} className="text-emerald-600" /> Informasi Wilayah Anda</h3>
-                {rtrwHead ? (
-                    <div className="flex items-center gap-4 p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                        <div className="w-14 h-14 rounded-full bg-emerald-200 flex items-center justify-center text-emerald-700 font-bold overflow-hidden border-2 border-white shadow-md">
-                            {rtrwHead.avatar_url ? <img src={rtrwHead.avatar_url} className="w-full h-full object-cover" /> : rtrwHead.full_name?.charAt(0)}
-                        </div>
-                        <div>
-                            <p className="text-[10px] text-emerald-600 font-black uppercase tracking-[0.1em]">Ketua RT {profile?.rt} / RW {profile?.rw}</p>
-                            <p className="text-gray-900 font-bold text-lg">{rtrwHead.full_name}</p>
-                            <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-bold">
-                                <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
-                                Sedang Bertugas
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="p-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
-                        <p className="text-sm text-gray-500 italic">Informasi pengurus RT {profile?.rt || '?'} belum tersedia.</p>
-                    </div>
-                )}
-                <div className="mt-4 flex items-center gap-2 text-xs text-gray-400 bg-gray-50 p-2 rounded-lg">
-                    <AlertCircle size={14} />
-                    <span>Seluruh aktivitas pickup Anda dipantau oleh pengurus wilayah.</span>
-                </div>
-            </div>
         </div>
     );
 
@@ -712,7 +521,7 @@ export default function UserDashboard() {
                     <button type="submit" className="w-full bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 transition flex items-center justify-center gap-2"><Send size={18} /> Kirim Pengaduan</button>
                 </form>
                 <h4 className="font-bold text-gray-700 mb-3 border-b pb-2">Riwayat Pengaduan</h4>
-                <div className="space-y-3">{complaints.length > 0 ? complaints.map(c => <div key={c.id} className="border p-4 rounded-xl hover:bg-gray-50 transition bg-white"><div className="flex justify-between items-start mb-2"><div><p className="font-bold text-gray-800">{c.subject}</p><p className="text-xs text-gray-500">{new Date(c.created_at).toLocaleDateString('id-ID')} • {c.category}</p></div><span className={`px-2 py-1 text-xs font-bold rounded ${c.status === 'Resolved' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{c.status}</span></div><p className="text-sm text-gray-700 bg-gray-50 p-2 rounded mb-2 italic">"{c.content}"</p>{c.response && <div className="mt-2 pl-3 border-l-4 border-green-500"><p className="text-xs font-bold text-green-700">Tanggapan RT/RW:</p><p className="text-sm text-gray-700">{c.response}</p></div>}</div>) : <div className="text-center py-6 text-gray-400 border border-dashed rounded-lg">Belum ada riwayat.</div>}</div>
+                <div className="space-y-3">{complaints.length > 0 ? complaints.map(c => <div key={c.id} className="border p-4 rounded-xl hover:bg-gray-50 transition bg-white"><div className="flex justify-between items-start mb-2"><div><p className="font-bold text-gray-800">{c.subject}</p><p className="text-xs text-gray-500">{new Date(c.created_at).toLocaleDateString('id-ID')} • {c.category}</p></div><span className={`px-2 py-1 text-xs font-bold rounded ${c.status === 'Resolved' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{c.status}</span></div><p className="text-sm text-gray-700 bg-gray-50 p-2 rounded mb-2 italic">&quot;{c.content}&quot;</p>{c.response && <div className="mt-2 pl-3 border-l-4 border-green-500"><p className="text-xs font-bold text-green-700">Tanggapan RT/RW:</p><p className="text-sm text-gray-700">{c.response}</p></div>}</div>) : <div className="text-center py-6 text-gray-400 border border-dashed rounded-lg">Belum ada riwayat.</div>}</div>
             </div>
         </div>
     );
@@ -741,8 +550,20 @@ export default function UserDashboard() {
                 <h3 className="font-bold text-lg mb-4 text-gray-800">Info Pengangkutan</h3>
                 {activePickup ? (
                     <div className="space-y-4">
-                        <div className="flex items-center gap-3"><div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-xl font-bold text-gray-500">BS</div><div><h4 className="font-bold text-gray-800">{activePickup.driver}</h4><p className="text-xs text-gray-500">{activePickup.vehicle}</p></div></div>
+                        <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-xl font-bold text-gray-500">
+                                {activePickup.driver ? activePickup.driver.substring(0, 2).toUpperCase() : 'DR'}
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-gray-800">{activePickup.driver}</h4>
+                                <p className="text-xs text-gray-500">{activePickup.vehicle}</p>
+                            </div>
+                        </div>
                         <div className="p-3 bg-yellow-50 text-yellow-800 rounded text-sm border border-yellow-200">Mohon bersiap, driver sedang menuju titik lokasi Anda.</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button className="py-2 bg-green-50 text-green-700 rounded font-bold text-sm flex justify-center gap-1 hover:bg-green-100 transition"><MessageCircle size={16} /> Chat</button>
+                            <button className="py-2 bg-blue-50 text-blue-700 rounded font-bold text-sm flex justify-center gap-1 hover:bg-blue-100 transition"><Phone size={16} /> Call</button>
+                        </div>
                     </div>
                 ) : <p className="text-gray-500 text-center py-4">Belum ada pickup aktif.</p>}
             </div>

@@ -216,3 +216,4 @@ export const ComplaintDetailModal = ({ complaint, onClose }) => {
         </div>
     );
 };
+

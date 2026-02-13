@@ -115,8 +115,8 @@ export const PengaduanList = ({ complaints, onOpenModal, onSelectComplaint }) =>
                                     <h4 className="font-bold text-gray-800 text-lg flex items-center gap-2 flex-wrap">
                                         {c.subject}
                                         <span className={`px-2 py-0.5 rounded text-xs font-bold ${c.status === 'Resolved' ? 'bg-green-100 text-green-700' :
-                                            c.status === 'In Progress' ? 'bg-blue-100 text-blue-700' :
-                                                'bg-yellow-100 text-yellow-700'
+                                                c.status === 'In Progress' ? 'bg-blue-100 text-blue-700' :
+                                                    'bg-yellow-100 text-yellow-700'
                                             }`}>
                                             {c.status}
                                         </span>
@@ -257,8 +257,8 @@ export const ComplaintDetailModal = ({ complaint, onClose }) => {
                         <div>
                             <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Status</label>
                             <span className={`inline-block px-3 py-1.5 rounded text-sm font-bold ${complaint.status === 'Resolved' ? 'bg-green-100 text-green-700 border border-green-300' :
-                                complaint.status === 'In Progress' ? 'bg-blue-100 text-blue-700 border border-blue-300' :
-                                    'bg-yellow-100 text-yellow-700 border border-yellow-300'
+                                    complaint.status === 'In Progress' ? 'bg-blue-100 text-blue-700 border border-blue-300' :
+                                        'bg-yellow-100 text-yellow-700 border border-yellow-300'
                                 }`}>
                                 {complaint.status}
                             </span>
@@ -313,3 +313,4 @@ export const ComplaintDetailModal = ({ complaint, onClose }) => {
         </div>
     );
 };
+

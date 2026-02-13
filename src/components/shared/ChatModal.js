@@ -84,102 +84,75 @@ export default function ChatModal({ isOpen, onClose, transactionId, currentUserI
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm transition-all duration-300">
-            <div className="bg-white rounded-2xl w-full max-w-md h-[550px] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 border border-gray-100">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md h-[500px] flex flex-col shadow-2xl animate-in zoom-in-95">
                 {/* Header */}
-                <div className="bg-gradient-to-r from-green-600 via-green-500 to-emerald-500 p-4 flex items-center justify-between text-white shadow-md z-10">
+                <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-4 rounded-t-2xl flex items-center justify-between text-white">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border border-white/30 shadow-inner">
-                            {isDriver ? <User size={20} /> : <MessageCircle size={20} />}
+                        <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                            <MessageCircle size={20} />
                         </div>
                         <div>
-                            <h3 className="font-bold text-lg leading-tight drop-shadow-sm">{otherUserName}</h3>
-                            <div className="flex items-center gap-1.5 opacity-90">
-                                <span className="w-2 h-2 bg-green-300 rounded-full animate-pulse shadow-[0_0_8px_rgba(134,239,172,0.8)]"></span>
-                                <p className="text-xs font-medium">Online • Order #{transactionId?.slice(0, 6)}</p>
-                            </div>
+                            <h3 className="font-bold">Chat dengan {otherUserName}</h3>
+                            <p className="text-xs opacity-80">Order #{transactionId?.slice(0, 8)}</p>
                         </div>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="p-2 hover:bg-white/20 rounded-full transition-colors duration-200 active:scale-95"
-                    >
+                    <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full transition">
                         <X size={20} />
                     </button>
                 </div>
 
-                {/* Messages Area */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 scroll-smooth">
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
                     {messages.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60">
-                            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-3">
-                                <MessageCircle size={32} />
-                            </div>
-                            <p className="font-medium">Belum ada pesan</p>
-                            <p className="text-xs">Sapa driver Anda sekarang!</p>
+                        <div className="text-center text-gray-400 py-8">
+                            <MessageCircle size={40} className="mx-auto mb-2 opacity-30" />
+                            <p>Belum ada pesan</p>
+                            <p className="text-xs">Mulai percakapan sekarang</p>
                         </div>
                     ) : (
-                        messages.map((msg, i) => {
-                            const isMe = msg.sender_id === currentUserId;
-                            const showTime = true; // Bisa di-optimize untuk grouping
-
-                            return (
-                                <div
-                                    key={msg.id || i}
-                                    className={`flex w-full ${isMe ? 'justify-end' : 'justify-start'} group animate-in slide-in-from-bottom-2 duration-300`}
-                                >
-                                    <div className={`flex flex-col max-w-[80%] ${isMe ? 'items-end' : 'items-start'}`}>
-                                        <div
-                                            className={`px-4 py-2.5 shadow-sm relative text-sm leading-relaxed break-words ${isMe
-                                                    ? 'bg-gradient-to-br from-green-500 to-emerald-600 text-white rounded-2xl rounded-tr-sm'
-                                                    : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm'
-                                                }`}
-                                        >
-                                            {!isMe && (
-                                                <p className="text-[10px] font-bold text-green-600 mb-0.5 opacity-80 uppercase tracking-wide">
-                                                    {msg.sender_name}
-                                                </p>
-                                            )}
-                                            {msg.message}
-                                        </div>
-                                        {showTime && (
-                                            <span className={`text-[10px] text-gray-400 mt-1 px-1 font-medium select-none transform transition-opacity duration-200 ${isMe ? 'text-right' : 'text-left'}`}>
-                                                {new Date(msg.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                                                {isMe && <span className="ml-1 text-green-500">✓</span>}
-                                            </span>
-                                        )}
-                                    </div>
+                        messages.map((msg, i) => (
+                            <div
+                                key={msg.id || i}
+                                className={`flex ${msg.sender_id === currentUserId ? 'justify-end' : 'justify-start'}`}
+                            >
+                                <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${msg.sender_id === currentUserId
+                                        ? 'bg-green-600 text-white rounded-br-md'
+                                        : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'
+                                    }`}>
+                                    <p className={`text-xs font-bold mb-0.5 ${msg.sender_id === currentUserId ? 'text-green-100' : 'text-gray-500'
+                                        }`}>
+                                        {msg.sender_name}
+                                    </p>
+                                    <p className="text-sm">{msg.message}</p>
+                                    <p className={`text-[10px] mt-1 ${msg.sender_id === currentUserId ? 'text-green-200' : 'text-gray-400'
+                                        }`}>
+                                        {new Date(msg.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                                    </p>
                                 </div>
-                            );
-                        })
+                            </div>
+                        ))
                     )}
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input Area */}
-                <form onSubmit={handleSend} className="p-3 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20">
-                    <div className="flex gap-2 items-end bg-gray-50 p-1.5 rounded-3xl border border-gray-200 focus-within:ring-2 focus-within:ring-green-500/20 focus-within:border-green-500 transition-all duration-300">
+                {/* Input */}
+                <form onSubmit={handleSend} className="p-4 border-t border-gray-200 bg-white rounded-b-2xl">
+                    <div className="flex gap-2">
                         <input
                             type="text"
                             value={newMessage}
                             onChange={(e) => setNewMessage(e.target.value)}
-                            placeholder="Tulis pesan..."
-                            className="flex-1 px-4 py-2.5 bg-transparent outline-none text-gray-700 placeholder-gray-400 text-sm max-h-32"
+                            placeholder="Ketik pesan..."
+                            className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 ring-green-500 outline-none text-gray-800"
                             disabled={loading}
                         />
                         <button
                             type="submit"
                             disabled={loading || !newMessage.trim()}
-                            className={`p-2.5 rounded-full flex-shrink-0 transition-all duration-300 ${loading || !newMessage.trim()
-                                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed scale-90'
-                                    : 'bg-green-600 text-white shadow-md shadow-green-200 hover:bg-green-700 hover:scale-105 active:scale-95'
-                                }`}
+                            className="bg-green-600 text-white px-4 py-3 rounded-xl hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {loading ? (
-                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            ) : (
-                                <Send size={18} className={newMessage.trim() ? 'ml-0.5' : ''} />
-                            )}
+                            <Send size={20} />
                         </button>
                     </div>
                 </form>
@@ -187,3 +160,4 @@ export default function ChatModal({ isOpen, onClose, transactionId, currentUserI
         </div>
     );
 }
+

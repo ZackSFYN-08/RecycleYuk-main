@@ -4,7 +4,6 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { getDashboardPath } from '@/utils/supabase';
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -43,11 +42,10 @@ export default function Login() {
         .single();
 
       if (profileError) {
-        console.warn("Gagal ambil profil dari database, mencoba fallback metadata:", profileError.message);
+        console.error("Gagal ambil profil:", profileError);
       }
 
-      // Gunakan role dari profil, jika gagal gunakan dari user_metadata (Auth), jika masih gagal default ke 'user'
-      const userRole = (profileData?.role || data.user.user_metadata?.role || 'user').toLowerCase();
+      const userRole = profileData?.role || 'user'; // Default 'user' jika null
 
       // Simpan role di localStorage (Opsional)
       localStorage.setItem('role', userRole);
@@ -61,8 +59,16 @@ export default function Login() {
         showConfirmButton: false,
         backdrop: `rgba(0,0,0,0.4)`
       }).then(() => {
-        // Redirect berdasarkan role menggunakan utility function
-        router.push(getDashboardPath(userRole));
+        // --- LOGIKA REDIRECT BERDASARKAN ROLE ---
+        if (userRole === 'admin') {
+          router.push('/dashboard/admin');
+        } else if (userRole === 'driver') {
+          router.push('/dashboard/driver');
+        } else if (userRole === 'rtrw' || userRole === 'rt') { // Support both 'rtrw' and 'rt'
+          router.push('/dashboard/rtrw');
+        } else {
+          router.push('/dashboard/user'); // Default Warga
+        }
       });
 
     } catch (err) {
